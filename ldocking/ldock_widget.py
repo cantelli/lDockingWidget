@@ -23,6 +23,7 @@ from .enums import (
     DockWidgetArea,
     DockWidgetClosable,
     DockWidgetFeature,
+    DockWidgetFeatures,
     DockWidgetFloatable,
     DockWidgetMovable,
     DockWidgetVerticalTitleBar,
@@ -69,6 +70,7 @@ class LDockWidget(QWidget):
 
     # Mirror QDockWidget class-level enum attributes (monkey-patch compatibility)
     DockWidgetFeature = DockWidgetFeature
+    DockWidgetFeatures = DockWidgetFeatures
     DockWidgetClosable = DockWidgetClosable
     DockWidgetMovable = DockWidgetMovable
     DockWidgetFloatable = DockWidgetFloatable

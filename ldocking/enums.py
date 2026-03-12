@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt as _Qt
 
 # --- DockWidgetFeature flags ---
 DockWidgetFeature = _Q.DockWidgetFeature
+DockWidgetFeatures = _Q.DockWidgetFeatures  # QFlags alias (plural)
 DockWidgetClosable = _Q.DockWidgetFeature.DockWidgetClosable
 DockWidgetMovable = _Q.DockWidgetFeature.DockWidgetMovable
 DockWidgetFloatable = _Q.DockWidgetFeature.DockWidgetFloatable
@@ -21,6 +22,7 @@ AllDockWidgetFeatures = (
 
 # --- DockOption flags (QMainWindow) ---
 DockOption = _QMW.DockOption
+DockOptions = _QMW.DockOptions  # QFlags alias (plural)
 AnimatedDocks = _QMW.DockOption.AnimatedDocks
 AllowNestedDocks = _QMW.DockOption.AllowNestedDocks
 AllowTabbedDocks = _QMW.DockOption.AllowTabbedDocks

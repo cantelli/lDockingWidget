@@ -40,6 +40,7 @@ from .enums import (
     AnimatedDocks,
     BottomDockWidgetArea,
     DockOption,
+    DockOptions,
     DockWidgetArea,
     ForceTabbedDocks,
     GroupedDragging,
@@ -62,6 +63,7 @@ class LMainWindow(QWidget):
 
     # Mirror QMainWindow class-level enum attributes (monkey-patch compatibility)
     DockOption = DockOption
+    DockOptions = DockOptions
     AnimatedDocks = AnimatedDocks
     AllowNestedDocks = AllowNestedDocks
     AllowTabbedDocks = AllowTabbedDocks
