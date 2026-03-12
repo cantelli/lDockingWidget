@@ -11,9 +11,10 @@ Layout:
 """
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -268,3 +269,111 @@ class LMainWindow(QWidget):
             self._status_bar.setParent(None)
         self._status_bar = status_bar
         self._root_layout.addWidget(status_bar)
+
+    # ------------------------------------------------------------------
+    # State persistence (mirrors QMainWindow.saveState / restoreState)
+    # ------------------------------------------------------------------
+
+    def saveState(self, version: int = 0) -> QByteArray:
+        """Serialize the current dock layout to a QByteArray.
+
+        Docks are identified by objectName() (preferred, follows Qt convention)
+        with windowTitle() as fallback. Docks that have neither are skipped.
+
+        Pass the returned value to restoreState() to re-apply the layout.
+        """
+        docks_state = []
+        for dock, area in self._dock_map.items():
+            ident = dock.objectName() or dock.windowTitle()
+            if not ident:
+                continue
+            area_docks = self._dock_areas[area]._docks
+            tab_index = area_docks.index(dock) if dock in area_docks else 0
+            entry: dict = {
+                "id": ident,
+                "area": area.value,
+                "tab_index": tab_index,
+                "floating": dock._floating,
+            }
+            if dock._floating:
+                g = dock.geometry()
+                entry["geometry"] = [g.x(), g.y(), g.width(), g.height()]
+            docks_state.append(entry)
+
+        payload = {
+            "version": 1,
+            "outer_splitter": self._outer_splitter.sizes(),
+            "inner_splitter": self._inner_splitter.sizes(),
+            "docks": docks_state,
+        }
+        return QByteArray(json.dumps(payload).encode())
+
+    def restoreState(self, state: QByteArray, version: int = 0) -> bool:
+        """Restore dock layout from a QByteArray produced by saveState().
+
+        Docks are matched by objectName() (preferred) or windowTitle().
+        Unrecognised dock IDs are silently skipped.
+        Returns False if the data is invalid or the version does not match.
+        """
+        try:
+            data = json.loads(bytes(state).decode())
+            if data.get("version") != 1:
+                return False
+
+            # Build identity → dock lookup from currently registered docks
+            lookup: dict[str, LDockWidget] = {}
+            for dock in list(self._dock_map):
+                ident = dock.objectName() or dock.windowTitle()
+                if ident:
+                    lookup[ident] = dock
+
+            entries = sorted(
+                data.get("docks", []), key=lambda e: e.get("tab_index", 0)
+            )
+
+            # Place each dock in its saved area (or float it)
+            for entry in entries:
+                dock = lookup.get(entry["id"])
+                if dock is None:
+                    continue
+                area = Qt.DockWidgetArea(entry["area"])
+                self.addDockWidget(area, dock)
+                if entry.get("floating"):
+                    g = entry.get("geometry")
+                    dock._float_out()
+                    if g:
+                        dock.setGeometry(g[0], g[1], g[2], g[3])
+
+            # Restore tab order within each area
+            area_saved: dict = {}
+            for entry in entries:
+                if entry.get("floating"):
+                    continue
+                dock = lookup.get(entry["id"])
+                if dock is None:
+                    continue
+                area = Qt.DockWidgetArea(entry["area"])
+                area_saved.setdefault(area, []).append(
+                    (dock, entry.get("tab_index", 0))
+                )
+
+            for area, pairs in area_saved.items():
+                area_obj = self._dock_areas[area]
+                for dock, idx in pairs:
+                    area_obj._insertion_order[dock] = idx
+                area_obj._docks.sort(
+                    key=lambda d: area_obj._insertion_order.get(d, 9999)
+                )
+                area_obj._update_layout()
+
+            # Restore splitter sizes
+            outer = data.get("outer_splitter")
+            if outer:
+                self._outer_splitter.setSizes(outer)
+            inner = data.get("inner_splitter")
+            if inner:
+                self._inner_splitter.setSizes(inner)
+
+            return True
+        except Exception:
+            return False
