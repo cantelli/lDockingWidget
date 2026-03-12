@@ -13,8 +13,8 @@ Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses th
 ## Installation
 
 ```bash
-pip install pyside6
-# copy the ldocking/ package into your project
+pip install -e .   # editable from repo root
+# or copy the ldocking/ directory into your project
 ```
 
 ## Quick Start
@@ -106,10 +106,18 @@ win.setDockOptions(options)
 win.dockOptions() -> QMainWindow.DockOption
 win.setMenuBar(menu_bar)
 win.menuBar() -> QMenuBar
-win.addToolBar(toolbar)
+win.addToolBar(toolbar_or_title)   # QToolBar or str
+win.removeToolBar(toolbar)
+win.insertToolBar(before, toolbar)
+win.toolBars() -> list[QToolBar]
+win.toolBarArea(toolbar) -> Qt.ToolBarArea   # always TopToolBarArea
+win.addToolBarBreak(...)   # no-op (single toolbar row)
 win.statusBar() -> QStatusBar
 win.setStatusBar(status_bar)
-win.setCorner(corner, area)   # no-op; corners handled by splitter geometry
+win.setCorner(corner, area)   # no-op; splitter geometry handles corners
+win.createPopupMenu() -> QMenu | None
+win.saveState(version=0) -> QByteArray
+win.restoreState(state, version=0) -> bool
 ```
 
 ### LDockWidget
@@ -127,6 +135,7 @@ dock.setFeatures(features)
 dock.features() -> DockWidgetFeature
 dock.setAllowedAreas(areas)
 dock.allowedAreas() -> Qt.DockWidgetArea
+dock.isAreaAllowed(area) -> bool
 dock.toggleViewAction() -> QAction
 # Signals:
 dock.featuresChanged(DockWidgetFeature)
@@ -149,31 +158,52 @@ from ldocking import (
 )
 ```
 
+## Stylesheets
+
+All widgets use `WA_StyledBackground` and carry QSS-addressable `objectName` selectors:
+
+| Selector | Widget |
+|---|---|
+| `LDockWidget` | The outer dock frame |
+| `LDockWidget > #dockTitleBar` | Title bar strip |
+| `LDockWidget > #dockContent` | Content area |
+| `LDockArea#dockAreaLeft` | Left dock strip |
+| `LDockArea#dockAreaRight` | Right dock strip |
+| `LDockArea#dockAreaTop` | Top dock strip |
+| `LDockArea#dockAreaBottom` | Bottom dock strip |
+
+Example dark theme:
+
+```css
+LDockWidget {
+    background: #2b2b2b;
+    border: 1px solid #3c3f41;
+}
+LDockWidget > #dockTitleBar {
+    background: #3c3f41;
+    color: #bbbbbb;
+}
+LDockWidget > #dockContent {
+    background: #2b2b2b;
+}
+```
+
 ## Tests
 
 ```bash
-# Reproduce the original Qt crash (exits non-zero with stock Qt)
-python tests/phase0_bug_demo.py
+# pytest suite (headless, uses offscreen QPA)
+pytest -v
 
-# Standalone floating LDockWidget
-python tests/phase1_floating.py
+# Individual test modules
+pytest tests/test_api_compat.py -v   # 38 API surface assertions
+pytest tests/test_stability.py -v   # float-all-redock cycle
+pytest tests/test_state.py -v       # saveState / restoreState
+pytest tests/test_api_gaps.py -v    # isAreaAllowed, toolbar, createPopupMenu
 
-# LMainWindow layout + float-all (no crash)
-python tests/phase2_docking.py
-
-# Drag-to-dock, drop zones, tab tear-off
-python tests/phase3_tabbing.py
-
-# Full window with menu/toolbar/statusbar
-python tests/phase4_full.py
-
-# API surface assertions (exit 0 = all 38 pass)
-python tests/phase5_compat.py
-
-# Visual demos
-python tests/demo_app.py
-python tests/parity_demo.py
-python tests/tabified_visual.py
+# Legacy standalone scripts (not collected by pytest)
+python tests/phase0_bug_demo.py     # reproduce the original Qt crash
+python tests/phase2_docking.py      # float-all no-crash smoke test
+python tests/demo_app.py            # full visual demo
 ```
 
 ## Design Notes
@@ -182,3 +212,5 @@ python tests/tabified_visual.py
 - Enums are re-exported **by reference** (not copied), so `isinstance(x, QDockWidget.DockWidgetFeature)` returns `True` for values sourced from `ldocking`.
 - `LDragManager` is a singleton; only one drag operation is active at a time.
 - `setCorner` is a no-op because splitter geometry naturally handles corner ownership.
+- `addToolBar` accepts either a `QToolBar` instance or a `str` title (matches both `QMainWindow` overloads). All toolbars live at the top; `toolBarArea` always returns `TopToolBarArea` and toolbar-break methods are no-ops.
+- QSS background rules require `WA_StyledBackground = True`, which is set on `LMainWindow`, `LDockWidget`, and `LDockArea`. The drop indicator uses `QPalette.Highlight` for theme awareness.

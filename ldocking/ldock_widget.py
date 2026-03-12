@@ -148,6 +148,8 @@ class LDockWidget(QWidget):
         if floating == self._floating:
             return
         if floating:
+            if not bool(self._features & DockWidgetFloatable):
+                return
             self._float_out()
         else:
             self._dock_back()

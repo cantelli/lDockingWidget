@@ -13,19 +13,19 @@ Eliminates `QDockAreaLayout` (private Qt C++ class) to fix a crash when all dock
 
 ## Tech Stack
 
-- Python 3.10+
+- Python 3.9+
 - PySide6 (not PyQt5/PyQt6)
 
 ## Running Tests
 
 ```bash
-python tests/phase5_compat.py   # API surface: 38 assertions, exit 0 = pass
-python tests/phase2_docking.py  # Float-all smoke test (the original crash scenario)
-python tests/phase0_bug_demo.py # Reproduces the original Qt crash for reference
-python tests/demo_app.py        # Full visual demo
+pytest -v                            # full suite (primary)
+pytest tests/test_api_compat.py -v  # API surface: 38 assertions
+python tests/phase0_bug_demo.py     # reproduces the original Qt crash
+python tests/demo_app.py            # full visual demo
 ```
 
-Always run `phase5_compat.py` after any API changes to verify the public surface is intact.
+Run `pytest -v` after any changes. All tests run headlessly via `QT_QPA_PLATFORM=offscreen` (set in `tests/conftest.py`).
 
 ## File Responsibilities
 
@@ -70,6 +70,16 @@ LMainWindow (QVBoxLayout)
 4. `mouseReleaseEvent` → `addDockWidget` on target, or leave floating
 5. `Escape` → cancel, return to origin
 
+## Intentional No-ops
+
+| Method | Reason |
+|---|---|
+| `LMainWindow.setCorner()` | Corner ownership is implicit in the splitter geometry |
+| `LMainWindow.addToolBarBreak()` | Single toolbar row — line breaks not supported |
+| `LMainWindow.removeToolBarBreak()` | (same) |
+| `LMainWindow.insertToolBarBreak()` | (same) |
+| `LMainWindow.toolBarBreak()` | Always returns `False` |
+
 ## Conventions
 
 - Type hints on all public methods.
@@ -77,3 +87,4 @@ LMainWindow (QVBoxLayout)
 - Private helpers prefixed with `_`.
 - No Qt signal connections in `__init__` of classes that are not yet fully constructed — connect signals after `super().__init__()` and full field setup.
 - `setParent(None)` before `deleteLater()` when removing widgets from layouts.
+- `WA_StyledBackground` must be set on any `QWidget` subclass that needs QSS `background-color` rules to work. Currently set on `LMainWindow`, `LDockWidget`, and `LDockArea`.

@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Drop-in replacement for QDockWidget/QMainWindow using splitter-based layout"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
+keywords = ["pyside6", "qt", "dock", "dockwidget", "mainwindow", "splitter", "gui"]
 dependencies = [
     "PySide6>=6.4",
 ]
@@ -24,6 +25,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: User Interfaces",
 ]
+
+[project.urls]
+Homepage = "https://github.com/cantelli/lDockingWidget"
+Source = "https://github.com/cantelli/lDockingWidget"
+"Bug Tracker" = "https://github.com/cantelli/lDockingWidget/issues"
 
 [project.optional-dependencies]
 dev = ["pytest"]

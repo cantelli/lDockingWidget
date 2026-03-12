@@ -37,7 +37,7 @@ class LTitleBar(QWidget):
         self._press_pos: QPoint | None = None
         self._dragging = False
 
-        self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("dockTitleBar")
         self._build_ui()
 
