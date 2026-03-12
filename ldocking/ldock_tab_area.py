@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QBoxLayout,
     QStackedWidget,
     QTabBar,
+    QTabWidget,
     QWidget,
 )
 
@@ -129,12 +130,19 @@ class LDockTabArea(QWidget):
         return list(self._docks)
 
     def set_vertical_tabs(self, vertical: bool) -> None:
-        if vertical:
-            self._layout.setDirection(QBoxLayout.Direction.LeftToRight)
-            self._tab_bar.setShape(QTabBar.Shape.RoundedWest)
-        else:
-            self._layout.setDirection(QBoxLayout.Direction.TopToBottom)
-            self._tab_bar.setShape(QTabBar.Shape.RoundedNorth)
+        pos = QTabWidget.TabPosition.West if vertical else QTabWidget.TabPosition.North
+        self.set_tab_position(pos)
+
+    def set_tab_position(self, position: QTabWidget.TabPosition) -> None:
+        _SHAPE = {
+            QTabWidget.TabPosition.North: (QBoxLayout.Direction.TopToBottom,  QTabBar.Shape.RoundedNorth),
+            QTabWidget.TabPosition.South: (QBoxLayout.Direction.BottomToTop,  QTabBar.Shape.RoundedSouth),
+            QTabWidget.TabPosition.West:  (QBoxLayout.Direction.LeftToRight,  QTabBar.Shape.RoundedWest),
+            QTabWidget.TabPosition.East:  (QBoxLayout.Direction.RightToLeft,  QTabBar.Shape.RoundedEast),
+        }
+        direction, shape = _SHAPE.get(position, _SHAPE[QTabWidget.TabPosition.North])
+        self._layout.setDirection(direction)
+        self._tab_bar.setShape(shape)
 
     # ------------------------------------------------------------------
     # Private

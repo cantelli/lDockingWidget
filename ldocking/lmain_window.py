@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QSplitter,
     QStatusBar,
+    QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -163,6 +164,17 @@ class LMainWindow(QWidget):
 
     def dockOptions(self) -> QMainWindow.DockOption:
         return self._dock_options
+
+    def setTabPosition(self, area: Qt.DockWidgetArea, position: QTabWidget.TabPosition) -> None:
+        dock_area = self._dock_areas.get(area)
+        if dock_area is not None:
+            dock_area.set_tab_position(position)
+
+    def tabPosition(self, area: Qt.DockWidgetArea) -> QTabWidget.TabPosition:
+        dock_area = self._dock_areas.get(area)
+        if dock_area is not None:
+            return dock_area.get_tab_position()
+        return QTabWidget.TabPosition.North
 
     def setCorner(
         self,

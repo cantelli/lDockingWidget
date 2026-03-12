@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QSizePolicy, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QSizePolicy, QSplitter, QTabWidget, QVBoxLayout, QWidget
 
 if TYPE_CHECKING:
     from .ldock_widget import LDockWidget
@@ -40,6 +40,7 @@ class LDockArea(QWidget):
         self._split_area: QSplitter | None = None
         self._allow_tabs: bool = True
         self._vertical_tabs_opt: bool = False
+        self._tab_position_opt: QTabWidget.TabPosition = QTabWidget.TabPosition.North
         self._insertion_order: dict[LDockWidget, int] = {}
 
         # Determine orientation for tab bar / vertical title bar
@@ -103,6 +104,14 @@ class LDockArea(QWidget):
         if changed:
             self._update_layout()
 
+    def set_tab_position(self, position: QTabWidget.TabPosition) -> None:
+        self._tab_position_opt = position
+        if self._tab_area is not None:
+            self._tab_area.set_tab_position(position)
+
+    def get_tab_position(self) -> QTabWidget.TabPosition:
+        return self._tab_position_opt
+
     # ------------------------------------------------------------------
     # Private: layout transitions
     # ------------------------------------------------------------------
@@ -132,6 +141,7 @@ class LDockArea(QWidget):
             self._destroy_split_area()
             if self._tab_area is None:
                 self._tab_area = LDockTabArea(self, vertical_tabs=self._vertical_tabs_opt)
+                self._tab_area.set_tab_position(self._tab_position_opt)
                 self._clear_layout()
                 self._layout.addWidget(self._tab_area)
 
