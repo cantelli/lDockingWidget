@@ -108,6 +108,8 @@ def test_main_window_dock_options(qapp):
     assert hasattr(win, "dockOptions")
     assert hasattr(win, "setCorner")
     assert hasattr(win, "tabifiedDockWidgets")
+    assert hasattr(win, "setTabPosition")
+    assert hasattr(win, "tabPosition")
 
     opts = win.dockOptions()
     assert bool(opts & QMainWindow.DockOption.AnimatedDocks)
@@ -116,6 +118,18 @@ def test_main_window_dock_options(qapp):
     new_opts = QMainWindow.DockOption.AnimatedDocks | QMainWindow.DockOption.AllowTabbedDocks
     win.setDockOptions(new_opts)
     assert win.dockOptions() == new_opts
+
+
+def test_main_window_tab_position(qapp):
+    from PySide6.QtWidgets import QTabWidget
+    win = LMainWindow()
+    # Default is North
+    assert win.tabPosition(LeftDockWidgetArea) == QTabWidget.TabPosition.North
+    # setTabPosition round-trips
+    win.setTabPosition(LeftDockWidgetArea, QTabWidget.TabPosition.South)
+    assert win.tabPosition(LeftDockWidgetArea) == QTabWidget.TabPosition.South
+    # Unknown area returns North without raising
+    assert win.tabPosition(Qt.DockWidgetArea.NoDockWidgetArea) == QTabWidget.TabPosition.North
 
 
 def test_tabified_dock_widgets(qapp):

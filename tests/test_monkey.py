@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 import PySide6.QtWidgets as _qw
+from PySide6.QtCore import Qt
 
 import ldocking.monkey as monkey
 from ldocking import LDockWidget, LMainWindow
@@ -112,3 +113,14 @@ def test_isinstance_ldockwidget_via_patched_name(qapp):
     from PySide6.QtWidgets import QDockWidget
     dock = LDockWidget("T")
     assert isinstance(dock, QDockWidget)
+
+
+def test_monkey_exposes_set_tab_position(qapp):
+    """setTabPosition / tabPosition are accessible through the patched name."""
+    from PySide6.QtWidgets import QMainWindow, QTabWidget
+    win = QMainWindow()
+    assert hasattr(win, "setTabPosition")
+    assert hasattr(win, "tabPosition")
+    win.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.East)
+    assert win.tabPosition(Qt.DockWidgetArea.RightDockWidgetArea) == QTabWidget.TabPosition.East
+    win.close()
