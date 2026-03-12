@@ -285,15 +285,32 @@ class LMainWindow(QWidget):
             self._root_layout.insertWidget(idx, self._menu_bar)
         return self._menu_bar
 
-    def addToolBar(self, toolbar_or_title: QToolBar | str) -> QToolBar:
-        if isinstance(toolbar_or_title, str):
-            toolbar = QToolBar(toolbar_or_title)
+    def setMenuWidget(self, widget: QWidget) -> None:
+        """Set a custom widget in the menu bar slot (QMainWindow compat)."""
+        if self._menu_bar is not None:
+            self._menu_bar.setParent(None)
+        self._menu_bar = widget  # type: ignore[assignment]
+        idx = self._root_layout.indexOf(self._menu_bar_slot)
+        self._menu_bar_slot.setParent(None)
+        self._root_layout.insertWidget(idx, widget)
+
+    def menuWidget(self) -> QWidget | None:
+        """Return the widget in the menu bar slot (QMainWindow compat)."""
+        return self._menu_bar
+
+    def addToolBar(self, toolbar_or_title_or_area, toolbar: QToolBar | None = None) -> QToolBar:
+        # Overload: addToolBar(toolbar), addToolBar(title), addToolBar(area, toolbar)
+        if toolbar is not None:
+            # addToolBar(area, toolbar) — area is ignored (only top row supported)
+            tb = toolbar
+        elif isinstance(toolbar_or_title_or_area, str):
+            tb = QToolBar(toolbar_or_title_or_area)
         else:
-            toolbar = toolbar_or_title
-        self._tool_bars.append(toolbar)
-        self._toolbar_layout.addWidget(toolbar)
+            tb = toolbar_or_title_or_area
+        self._tool_bars.append(tb)
+        self._toolbar_layout.addWidget(tb)
         self._toolbar_container.setMaximumHeight(16777215)
-        return toolbar
+        return tb
 
     def removeToolBar(self, toolbar: QToolBar) -> None:
         if toolbar in self._tool_bars:
