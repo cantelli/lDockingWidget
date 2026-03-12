@@ -34,10 +34,20 @@ _DEFAULT_DOCK_OPTIONS = (
 
 from .ldock_area import LDockArea
 from .enums import (
+    AllDockWidgetAreas,
+    AllowNestedDocks,
+    AllowTabbedDocks,
+    AnimatedDocks,
+    BottomDockWidgetArea,
+    DockOption,
+    DockWidgetArea,
+    ForceTabbedDocks,
+    GroupedDragging,
     LeftDockWidgetArea,
+    NoDockWidgetArea,
     RightDockWidgetArea,
     TopDockWidgetArea,
-    BottomDockWidgetArea,
+    VerticalTabs,
 )
 
 if TYPE_CHECKING:
@@ -49,6 +59,22 @@ class LMainWindow(QWidget):
 
     Replaces QMainWindow to avoid QDockAreaLayout entirely.
     """
+
+    # Mirror QMainWindow class-level enum attributes (monkey-patch compatibility)
+    DockOption = DockOption
+    AnimatedDocks = AnimatedDocks
+    AllowNestedDocks = AllowNestedDocks
+    AllowTabbedDocks = AllowTabbedDocks
+    ForceTabbedDocks = ForceTabbedDocks
+    VerticalTabs = VerticalTabs
+    GroupedDragging = GroupedDragging
+    DockWidgetArea = DockWidgetArea
+    LeftDockWidgetArea = LeftDockWidgetArea
+    RightDockWidgetArea = RightDockWidgetArea
+    TopDockWidgetArea = TopDockWidgetArea
+    BottomDockWidgetArea = BottomDockWidgetArea
+    AllDockWidgetAreas = AllDockWidgetAreas
+    NoDockWidgetArea = NoDockWidgetArea
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

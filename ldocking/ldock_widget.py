@@ -19,13 +19,18 @@ from PySide6.QtWidgets import (
 from .enums import (
     AllDockWidgetAreas,
     AllDockWidgetFeatures,
+    BottomDockWidgetArea,
+    DockWidgetArea,
     DockWidgetClosable,
     DockWidgetFeature,
     DockWidgetFloatable,
     DockWidgetMovable,
     DockWidgetVerticalTitleBar,
+    LeftDockWidgetArea,
+    NoDockWidgetArea,
     NoDockWidgetFeatures,
     RightDockWidgetArea,
+    TopDockWidgetArea,
 )
 from .ltitle_bar import LTitleBar
 
@@ -61,6 +66,22 @@ class LDockWidget(QWidget):
     visibilityChanged = Signal(bool)
     topLevelChanged = Signal(bool)
     dockLocationChanged = Signal(object)      # Qt.DockWidgetArea
+
+    # Mirror QDockWidget class-level enum attributes (monkey-patch compatibility)
+    DockWidgetFeature = DockWidgetFeature
+    DockWidgetClosable = DockWidgetClosable
+    DockWidgetMovable = DockWidgetMovable
+    DockWidgetFloatable = DockWidgetFloatable
+    DockWidgetVerticalTitleBar = DockWidgetVerticalTitleBar
+    NoDockWidgetFeatures = NoDockWidgetFeatures
+    AllDockWidgetFeatures = AllDockWidgetFeatures
+    DockWidgetArea = DockWidgetArea
+    LeftDockWidgetArea = LeftDockWidgetArea
+    RightDockWidgetArea = RightDockWidgetArea
+    TopDockWidgetArea = TopDockWidgetArea
+    BottomDockWidgetArea = BottomDockWidgetArea
+    AllDockWidgetAreas = AllDockWidgetAreas
+    NoDockWidgetArea = NoDockWidgetArea
 
     def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
