@@ -10,6 +10,19 @@ Qt's `QMainWindow` internally creates a `QDockAreaLayout` (a private C++ class).
 
 Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses that never instantiate `QDockAreaLayout`. Layout is built entirely from `QSplitter` widgets.
 
+## Compatibility Notes
+
+`ldocking` aims to be a practical migration layer for common `QMainWindow` / `QDockWidget` usage, not a byte-for-byte reimplementation of every Qt docking behavior.
+
+- `addDockWidget()` and drag/drop now honor `allowedAreas()`. If the requested area is disallowed, the dock falls back to the first allowed side; if no areas are allowed, the operation is ignored.
+- Floating/re-docking preserves stable tab order within a dock area.
+- `saveState()` / `restoreState()` now preserve the active tab within each tabbed dock area.
+- `toggleViewAction()` restores hidden docks without losing floating state, and re-selects a dock when it is shown inside a tab group.
+- Drag/drop now distinguishes side-dock targets from center tab-drop targets within visible dock areas.
+- `ForceTabbedDocks` is honored for same-area additions within the current splitter-based layout model.
+- `saveState(version)` persists the caller-provided version number, and `restoreState(state, version)` requires the same version to succeed.
+- Toolbar breaks and `setCorner()` remain intentional no-ops because the splitter layout has a fixed structure.
+
 ## Installation
 
 ```bash
@@ -231,6 +244,7 @@ pytest tests/test_api_gaps.py -v    # isAreaAllowed, toolbar, createPopupMenu
 python tests/phase0_bug_demo.py     # reproduce the original Qt crash
 python tests/phase2_docking.py      # float-all no-crash smoke test
 python tests/demo_app.py            # full visual demo
+python tests/visual_compare_demo.py # side-by-side Qt vs ldocking visual comparison
 ```
 
 ## Design Notes

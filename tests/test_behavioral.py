@@ -5,11 +5,12 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QLabel
 
 from ldocking import (
     LDockWidget,
+    LDragManager,
     LMainWindow,
     LeftDockWidgetArea,
     RightDockWidgetArea,
@@ -20,6 +21,7 @@ from ldocking import (
     DockWidgetFloatable,
     NoDockWidgetFeatures,
     AllDockWidgetFeatures,
+    ForceTabbedDocks,
 )
 
 
@@ -238,6 +240,92 @@ def test_toggle_view_action_shows_dock(qapp):
     assert not dock.isHidden()
 
 
+def test_toggle_view_action_show_selects_tab(qapp):
+    """Showing a hidden tabbed dock makes it the active tab again."""
+    win = LMainWindow()
+    da = _dock("da")
+    db = _dock("db")
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+
+    area = win._dock_areas[LeftDockWidgetArea]
+    area.set_current_tab_dock(da)
+    db.hide()
+
+    db.toggleViewAction().setChecked(True)
+
+    assert area.current_tab_dock() is db
+
+
+def test_toggle_view_action_restores_hidden_floating_dock(qapp):
+    """Showing a hidden floating dock keeps it floating."""
+    win = LMainWindow()
+    dock = _dock("d")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    dock.setFloating(True)
+    dock.hide()
+
+    dock.toggleViewAction().setChecked(True)
+
+    assert dock.isVisible()
+    assert dock.isFloating()
+
+
+def test_force_tabbed_docks_tabs_same_area(qapp):
+    """ForceTabbedDocks keeps same-area docks in a tab group."""
+    win = LMainWindow()
+    win.setDockOptions(ForceTabbedDocks)
+    da = _dock("da")
+    db = _dock("db")
+
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+
+    assert db in win.tabifiedDockWidgets(da)
+
+
+def test_drag_manager_classifies_area_center_as_tab_target(qapp):
+    """Dragging over the center of a visible dock area yields a tab target."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    win.show()
+    dock = _dock("d")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    qapp.processEvents()
+
+    dm = LDragManager.instance()
+    area = win._dock_areas[LeftDockWidgetArea]
+    center_global = area.mapToGlobal(area.rect().center())
+    local = win.mapFromGlobal(center_global)
+
+    dm._dock = dock
+    target = dm._classify_drop_zone(win, local)
+
+    assert target is not None
+    assert target.area_side == LeftDockWidgetArea
+    assert target.mode == "tab"
+    win.hide()
+
+
+def test_drag_manager_classifies_window_edge_as_side_target(qapp):
+    """Dragging near the main-window edge yields a side-dock target."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    win.show()
+    dock = _dock("d")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    qapp.processEvents()
+
+    dm = LDragManager.instance()
+    dm._dock = dock
+    target = dm._classify_drop_zone(win, win.rect().topLeft() + QPoint(5, 100))
+
+    assert target is not None
+    assert target.area_side == LeftDockWidgetArea
+    assert target.mode == "side"
+    win.hide()
+
+
 # ------------------------------------------------------------------
 # resizeDocks
 # ------------------------------------------------------------------
@@ -323,6 +411,28 @@ def test_dock_widget_area_unknown_returns_none(qapp):
     """dockWidgetArea returns NoDockWidgetArea for unregistered docks."""
     win = LMainWindow()
     dock = _dock("d")
+    assert win.dockWidgetArea(dock) == Qt.DockWidgetArea.NoDockWidgetArea
+
+
+def test_add_dock_widget_falls_back_to_first_allowed_area(qapp):
+    """addDockWidget docks into the first allowed area when preferred area is invalid."""
+    win = LMainWindow()
+    dock = _dock("d")
+    dock.setAllowedAreas(RightDockWidgetArea | BottomDockWidgetArea)
+
+    win.addDockWidget(LeftDockWidgetArea, dock)
+
+    assert win.dockWidgetArea(dock) == RightDockWidgetArea
+
+
+def test_add_dock_widget_noops_when_no_areas_allowed(qapp):
+    """addDockWidget leaves the dock untouched when no dock areas are allowed."""
+    win = LMainWindow()
+    dock = _dock("d")
+    dock.setAllowedAreas(Qt.DockWidgetArea.NoDockWidgetArea)
+
+    win.addDockWidget(LeftDockWidgetArea, dock)
+
     assert win.dockWidgetArea(dock) == Qt.DockWidgetArea.NoDockWidgetArea
 
 

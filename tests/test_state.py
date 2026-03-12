@@ -138,5 +138,56 @@ def test_restore_invalid_data(qapp):
     assert win.restoreState(QByteArray(b"not json")) is False
     assert win.restoreState(QByteArray(b"")) is False
 
-    wrong_version = QByteArray(json.dumps({"version": 99, "docks": []}).encode())
+    wrong_version = QByteArray(json.dumps({"format_version": 99, "docks": []}).encode())
     assert win.restoreState(wrong_version) is False
+
+
+def test_save_restore_state_version_round_trip(qapp):
+    """restoreState requires the same caller-provided state version."""
+    win = LMainWindow()
+    dock = _make_dock("da")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+
+    state = win.saveState(version=7)
+
+    assert win.restoreState(state, version=7) is True
+    assert win.restoreState(state, version=3) is False
+
+
+def test_save_restore_tab_order_after_tab_move(qapp):
+    """saveState persists user tab reordering from the tab bar."""
+    win = LMainWindow()
+    docks = [_make_dock(name) for name in ("a", "b", "c")]
+    for dock in docks:
+        win.addDockWidget(LeftDockWidgetArea, dock)
+
+    tab_area = win._dock_areas[LeftDockWidgetArea]._tab_area
+    tab_area._on_tab_moved(2, 0)
+
+    state = win.saveState()
+
+    for dock in docks:
+        win.addDockWidget(RightDockWidgetArea, dock)
+
+    assert win.restoreState(state) is True
+    left_docks = win._dock_areas[LeftDockWidgetArea]._docks
+    assert [dock.windowTitle() for dock in left_docks] == ["c", "a", "b"]
+
+
+def test_save_restore_current_tab_selection(qapp):
+    """saveState persists the currently selected tab in a dock area."""
+    win = LMainWindow()
+    docks = [_make_dock(name) for name in ("a", "b", "c")]
+    for dock in docks:
+        win.addDockWidget(LeftDockWidgetArea, dock)
+
+    area = win._dock_areas[LeftDockWidgetArea]
+    area.set_current_tab_dock(docks[1])
+
+    state = win.saveState()
+
+    area.set_current_tab_dock(docks[2])
+    assert area.current_tab_dock() is docks[2]
+
+    assert win.restoreState(state) is True
+    assert area.current_tab_dock() is docks[1]

@@ -207,7 +207,10 @@ class LDockWidget(QWidget):
         snap_size = self.size()
 
         if self._current_area is not None:
-            self._pre_float_position = self._current_area._docks.index(self)  # store BEFORE remove_dock clears _current_area
+            self._pre_float_position = self._current_area._insertion_order.get(
+                self,
+                self._current_area._docks.index(self),
+            )
             self._pre_float_area_side = self._current_area._area_side
             self._current_area.remove_dock(self)
 
@@ -244,7 +247,10 @@ class LDockWidget(QWidget):
         """Re-dock into the main window (last known area, or Left)."""
         if self._main_window is None:
             return
-        area = self._pre_float_area_side or Qt.DockWidgetArea.LeftDockWidgetArea
+        preferred_area = self._pre_float_area_side or Qt.DockWidgetArea.LeftDockWidgetArea
+        area = self._main_window._resolve_dock_area(self, preferred_area)
+        if area is None:
+            return
 
         # Remove size grip from layout
         if self._size_grip is not None:
@@ -303,6 +309,8 @@ class LDockWidget(QWidget):
                 self._float_out()
 
     def _on_drag_started(self, global_pos: QPoint) -> None:
+        if not bool(self._features & DockWidgetMovable):
+            return
         if self._floating:
             self._float_drag_offset = global_pos - self.pos()
             self._float_moving = True       # native window move mode
@@ -330,6 +338,8 @@ class LDockWidget(QWidget):
 
     def setVisible(self, visible: bool) -> None:
         super().setVisible(visible)
+        if visible and self._current_area is not None:
+            self._current_area.set_current_tab_dock(self)
         self.visibilityChanged.emit(visible)
 
     # ------------------------------------------------------------------

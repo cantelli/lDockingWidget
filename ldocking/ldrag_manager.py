@@ -1,17 +1,17 @@
-"""LDragManager — singleton drag state machine + global event filter.
+"""LDragManager - singleton drag state machine + global event filter.
 
 Lifecycle:
-  1. LTitleBar.drag_started → LDragManager.begin_drag(dock, global_pos)
-  2. Global event filter: mouseMoveEvent → move dock + show LDropIndicator
-  3. Global event filter: mouseReleaseEvent → drop or keep floating
-  4. Key Escape → cancel drag, restore dock to origin
+  1. LTitleBar.drag_started -> LDragManager.begin_drag(dock, global_pos)
+  2. Global event filter: mouseMoveEvent -> move dock + show LDropIndicator
+  3. Global event filter: mouseReleaseEvent -> drop or keep floating
+  4. Key Escape -> cancel drag, restore dock to origin
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QPoint, QRect, Qt
-from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from .ldrop_indicator import LDropIndicator
@@ -22,8 +22,15 @@ if TYPE_CHECKING:
     from .lmain_window import LMainWindow
 
 
-# Edge threshold fraction (20% of dimension)
 _EDGE_FRACTION = 0.20
+_AREA_CENTER_FRACTION = 0.55
+
+
+@dataclass(frozen=True)
+class _DropTarget:
+    main_window: LMainWindow
+    area_side: object
+    mode: str  # "side" | "tab"
 
 
 class LDragManager(QObject):
@@ -46,11 +53,7 @@ class LDragManager(QObject):
         self._drag_offset = QPoint()
         self._active = False
         self._indicator = LDropIndicator()
-        self._drop_target: tuple[LMainWindow, object] | None = None  # (mw, area_side)
-
-    # ------------------------------------------------------------------
-    # Public
-    # ------------------------------------------------------------------
+        self._drop_target: _DropTarget | None = None
 
     def begin_drag(self, dock: LDockWidget, global_pos: QPoint) -> None:
         """Start a drag operation for ``dock``."""
@@ -66,7 +69,6 @@ class LDragManager(QObject):
         if dock._current_area is not None:
             dock._pre_float_area_side = dock._current_area._area_side
 
-        # Detach from dock area, make floating
         if dock._current_area is not None:
             dock._current_area.remove_dock(dock)
 
@@ -78,7 +80,6 @@ class LDragManager(QObject):
         )
         dock.setWindowFlags(flags)
         dock.resize(dock.sizeHint().expandedTo(dock.minimumSize()))
-        # Center dock window under cursor
         self._drag_offset = QPoint(dock.width() // 2, 12)
         dock.move(global_pos - self._drag_offset)
         dock.show()
@@ -110,17 +111,13 @@ class LDragManager(QObject):
             dock.show()
             dock.topLevelChanged.emit(True)
 
-    # ------------------------------------------------------------------
-    # QObject event filter
-    # ------------------------------------------------------------------
-
     def eventFilter(self, obj: QObject, event) -> bool:
         if not self._active or self._dock is None:
             return False
 
         from PySide6.QtCore import QEvent
-        etype = event.type()
 
+        etype = event.type()
         if etype == QEvent.Type.MouseMove:
             self._on_mouse_move(event.globalPosition().toPoint())
             return True
@@ -137,20 +134,15 @@ class LDragManager(QObject):
 
         return False
 
-    # ------------------------------------------------------------------
-    # Private
-    # ------------------------------------------------------------------
-
     def _on_mouse_move(self, global_pos: QPoint) -> None:
         if self._dock is None:
             return
         self._dock.move(global_pos - self._drag_offset)
 
-        mw, area_side = self._find_drop_target(global_pos)
-        if mw is not None and area_side is not None:
-            self._drop_target = (mw, area_side)
-            rect = self._compute_indicator_rect(mw, area_side)
-            self._indicator.show_at(rect)
+        target = self._find_drop_target(global_pos)
+        if target is not None:
+            self._drop_target = target
+            self._indicator.show_at(self._compute_indicator_rect(target))
         else:
             self._drop_target = None
             self._indicator.hide_indicator()
@@ -168,32 +160,50 @@ class LDragManager(QObject):
             return
 
         if drop is not None:
-            mw, area_side = drop
             dock._floating = False
-            mw.addDockWidget(area_side, dock)
+            drop.main_window.addDockWidget(drop.area_side, dock)
+            if drop.mode == "tab":
+                drop.main_window._dock_areas[drop.area_side].set_current_tab_dock(dock)
             dock.topLevelChanged.emit(False)
         else:
-            # Drop in empty space → keep floating
             dock._floating = True
             dock.topLevelChanged.emit(True)
 
-    def _find_drop_target(
-        self, global_pos: QPoint
-    ) -> tuple[LMainWindow | None, object]:
-        """Return (main_window, area_side) for the given global position."""
+    def _find_drop_target(self, global_pos: QPoint) -> _DropTarget | None:
+        """Return the drop target for the given global position."""
         from .lmain_window import LMainWindow
 
         for widget in QApplication.topLevelWidgets():
             if isinstance(widget, LMainWindow) and widget.isVisible():
                 local = widget.mapFromGlobal(global_pos)
                 if widget.rect().contains(local):
-                    area_side = self._classify_drop_zone(widget, local)
-                    return widget, area_side
-        return None, None
+                    target = self._classify_drop_zone(widget, local)
+                    if target is None or self._dock is None:
+                        return target
+                    resolved_area = widget._resolve_dock_area(
+                        self._dock, target.area_side
+                    )
+                    if resolved_area is None:
+                        return None
+                    return _DropTarget(widget, resolved_area, target.mode)
+        return None
 
-    def _classify_drop_zone(self, mw: LMainWindow, local: QPoint):
-        """Return Qt.DockWidgetArea for the drop zone, or None."""
+    def _classify_drop_zone(
+        self, mw: LMainWindow, local: QPoint
+    ) -> _DropTarget | None:
+        """Return the hovered drop target, or None."""
         from PySide6.QtCore import Qt as _Qt
+
+        for area in mw._dock_areas.values():
+            if area.isVisible():
+                area_local = area.mapFromGlobal(mw.mapToGlobal(local))
+                if not area.rect().contains(area_local):
+                    continue
+                if self._dock is not None and not self._dock.isAreaAllowed(area._area_side):
+                    return None
+                if self._compute_area_tab_rect(area).contains(area_local):
+                    return _DropTarget(mw, area._area_side, "tab")
+                return _DropTarget(mw, area._area_side, "side")
 
         w = mw.width()
         h = mw.height()
@@ -201,32 +211,31 @@ class LDragManager(QObject):
         f = _EDGE_FRACTION
 
         if x < w * f:
-            return _Qt.DockWidgetArea.LeftDockWidgetArea
+            return _DropTarget(mw, _Qt.DockWidgetArea.LeftDockWidgetArea, "side")
         if x > w * (1 - f):
-            return _Qt.DockWidgetArea.RightDockWidgetArea
+            return _DropTarget(mw, _Qt.DockWidgetArea.RightDockWidgetArea, "side")
         if y < h * f:
-            return _Qt.DockWidgetArea.TopDockWidgetArea
+            return _DropTarget(mw, _Qt.DockWidgetArea.TopDockWidgetArea, "side")
         if y > h * (1 - f):
-            return _Qt.DockWidgetArea.BottomDockWidgetArea
-
-        # Check if over a dock area for tab-drop
-        for area in mw._dock_areas.values():
-            if area.isVisible():
-                area_local = area.mapFromGlobal(mw.mapToGlobal(local))
-                if area.rect().contains(area_local):
-                    return area._area_side
+            return _DropTarget(mw, _Qt.DockWidgetArea.BottomDockWidgetArea, "side")
 
         return None
 
-    def _compute_indicator_rect(self, mw: LMainWindow, area_side) -> QRect:
+    def _compute_indicator_rect(self, target: _DropTarget) -> QRect:
         from PySide6.QtCore import Qt as _Qt
 
-        mw_rect = mw.geometry()
-        # Map to global
+        mw = target.main_window
+        area_side = target.area_side
         tl = mw.mapToGlobal(mw.rect().topLeft())
         mw_global = QRect(tl, mw.size())
         w, h = mw_global.width(), mw_global.height()
         f = _EDGE_FRACTION
+
+        if target.mode == "tab":
+            area = mw._dock_areas[area_side]
+            local_rect = self._compute_area_tab_rect(area)
+            global_top_left = area.mapToGlobal(local_rect.topLeft())
+            return QRect(global_top_left, local_rect.size())
 
         if area_side == _Qt.DockWidgetArea.LeftDockWidgetArea:
             return QRect(mw_global.left(), mw_global.top(), int(w * f), h)
@@ -237,8 +246,15 @@ class LDragManager(QObject):
         if area_side == _Qt.DockWidgetArea.BottomDockWidgetArea:
             return QRect(mw_global.left(), mw_global.bottom() - int(h * f), w, int(h * f))
 
-        # Fallback: full main window
         return mw_global
+
+    def _compute_area_tab_rect(self, area: LDockArea) -> QRect:
+        rect = area.rect()
+        width = max(48, int(rect.width() * _AREA_CENTER_FRACTION))
+        height = max(32, int(rect.height() * _AREA_CENTER_FRACTION))
+        tab_rect = QRect(0, 0, width, height)
+        tab_rect.moveCenter(rect.center())
+        return tab_rect
 
     def _reset(self) -> None:
         self._dock = None

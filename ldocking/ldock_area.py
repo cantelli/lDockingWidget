@@ -75,7 +75,10 @@ class LDockArea(QWidget):
         if dock in self._docks:
             return
         dock._current_area = self
-        if dock not in self._insertion_order:
+        if index is not None:
+            bounded_index = max(0, min(index, len(self._docks)))
+            self._rebalance_insertion_order(inserted_dock=dock, index=bounded_index)
+        elif dock not in self._insertion_order:
             self._insertion_order[dock] = len(self._insertion_order)
         self._docks.append(dock)
         self._docks.sort(key=lambda d: self._insertion_order.get(d, 9999))
@@ -109,8 +112,27 @@ class LDockArea(QWidget):
         if self._tab_area is not None:
             self._tab_area.set_tab_position(position)
 
+    def sync_tab_order(self, ordered_docks: list[LDockWidget]) -> None:
+        """Persist tab order changes coming from the tab bar."""
+        if set(ordered_docks) != set(self._docks):
+            return
+        self._docks = list(ordered_docks)
+        self._insertion_order = {
+            dock: idx for idx, dock in enumerate(self._docks)
+        }
+
     def get_tab_position(self) -> QTabWidget.TabPosition:
         return self._tab_position_opt
+
+    def current_tab_dock(self) -> LDockWidget | None:
+        if self._tab_area is None:
+            return None
+        return self._tab_area.current_dock
+
+    def set_current_tab_dock(self, dock: LDockWidget) -> None:
+        if self._tab_area is None:
+            return
+        self._tab_area.set_current_dock(dock)
 
     # ------------------------------------------------------------------
     # Private: layout transitions
@@ -202,3 +224,17 @@ class LDockArea(QWidget):
             self._split_area.setParent(None)
             self._split_area.deleteLater()
             self._split_area = None
+
+    def _rebalance_insertion_order(
+        self, inserted_dock: LDockWidget, index: int
+    ) -> None:
+        ordered = [
+            dock for dock, _ in sorted(
+                self._insertion_order.items(), key=lambda item: item[1]
+            )
+            if dock in self._docks
+        ]
+        ordered.insert(index, inserted_dock)
+        self._insertion_order = {
+            dock: idx for idx, dock in enumerate(ordered)
+        }

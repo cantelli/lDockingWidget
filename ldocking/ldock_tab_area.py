@@ -72,11 +72,12 @@ class LDockTabArea(QWidget):
 
         self._tab_bar = LTearOffTabBar(self)
         self._tab_bar.currentChanged.connect(self._on_tab_changed)
-        self._tab_bar.tabMoved.connect(lambda f, t: self._docks.insert(t, self._docks.pop(f)))
         self._layout.addWidget(self._tab_bar)
 
         self._stack = QStackedWidget()
         self._layout.addWidget(self._stack, 1)
+
+        self._tab_bar.tabMoved.connect(self._on_tab_moved)
 
         if vertical_tabs:
             self.set_vertical_tabs(True)
@@ -129,6 +130,15 @@ class LDockTabArea(QWidget):
     def all_docks(self) -> list[LDockWidget]:
         return list(self._docks)
 
+    def current_index(self) -> int:
+        return self._tab_bar.currentIndex()
+
+    def set_current_dock(self, dock: LDockWidget) -> None:
+        if dock not in self._docks:
+            return
+        idx = self._docks.index(dock)
+        self._tab_bar.setCurrentIndex(idx)
+
     def set_vertical_tabs(self, vertical: bool) -> None:
         pos = QTabWidget.TabPosition.West if vertical else QTabWidget.TabPosition.North
         self.set_tab_position(pos)
@@ -151,3 +161,14 @@ class LDockTabArea(QWidget):
     def _on_tab_changed(self, index: int) -> None:
         if 0 <= index < self._stack.count():
             self._stack.setCurrentIndex(index)
+
+    def _on_tab_moved(self, from_index: int, to_index: int) -> None:
+        if from_index == to_index:
+            return
+        current_dock = self.current_dock
+        self._docks.insert(to_index, self._docks.pop(from_index))
+        if current_dock is not None and current_dock in self._docks:
+            self._tab_bar.setCurrentIndex(self._docks.index(current_dock))
+        parent_area = self.parent()
+        if parent_area is not None and hasattr(parent_area, "sync_tab_order"):
+            parent_area.sync_tab_order(self._docks)
