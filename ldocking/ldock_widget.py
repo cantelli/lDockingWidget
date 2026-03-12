@@ -138,6 +138,9 @@ class LDockWidget(QWidget):
     def allowedAreas(self):
         return self._allowed_areas
 
+    def isAreaAllowed(self, area: Qt.DockWidgetArea) -> bool:
+        return bool(self._allowed_areas & area)
+
     def isFloating(self) -> bool:
         return self._floating
 

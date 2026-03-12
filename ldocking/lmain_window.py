@@ -18,6 +18,7 @@ from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
+    QMenu,
     QMenuBar,
     QSplitter,
     QStatusBar,
@@ -256,10 +257,49 @@ class LMainWindow(QWidget):
             self._root_layout.insertWidget(idx, self._menu_bar)
         return self._menu_bar
 
-    def addToolBar(self, toolbar: QToolBar) -> None:
+    def addToolBar(self, toolbar_or_title: QToolBar | str) -> QToolBar:
+        if isinstance(toolbar_or_title, str):
+            toolbar = QToolBar(toolbar_or_title)
+        else:
+            toolbar = toolbar_or_title
         self._tool_bars.append(toolbar)
         self._toolbar_layout.addWidget(toolbar)
         self._toolbar_container.setMaximumHeight(16777215)
+        return toolbar
+
+    def removeToolBar(self, toolbar: QToolBar) -> None:
+        if toolbar in self._tool_bars:
+            self._tool_bars.remove(toolbar)
+            toolbar.setParent(None)
+            if not self._tool_bars:
+                self._toolbar_container.setMaximumHeight(0)
+
+    def insertToolBar(self, before: QToolBar, toolbar: QToolBar) -> None:
+        if toolbar in self._tool_bars:
+            self._tool_bars.remove(toolbar)
+            toolbar.setParent(None)
+        idx = self._tool_bars.index(before) if before in self._tool_bars else len(self._tool_bars)
+        self._tool_bars.insert(idx, toolbar)
+        self._toolbar_layout.insertWidget(idx, toolbar)
+        self._toolbar_container.setMaximumHeight(16777215)
+
+    def toolBars(self) -> list[QToolBar]:
+        return list(self._tool_bars)
+
+    def toolBarArea(self, toolbar: QToolBar) -> Qt.ToolBarArea:
+        return Qt.ToolBarArea.TopToolBarArea
+
+    def addToolBarBreak(self, area: Qt.ToolBarArea = Qt.ToolBarArea.TopToolBarArea) -> None:
+        pass  # single toolbar row — line breaks not supported
+
+    def removeToolBarBreak(self, before: QToolBar) -> None:
+        pass
+
+    def insertToolBarBreak(self, before: QToolBar) -> None:
+        pass
+
+    def toolBarBreak(self, toolbar: QToolBar) -> bool:
+        return False
 
     def statusBar(self) -> QStatusBar:
         return self._status_bar
@@ -269,6 +309,25 @@ class LMainWindow(QWidget):
             self._status_bar.setParent(None)
         self._status_bar = status_bar
         self._root_layout.addWidget(status_bar)
+
+    def createPopupMenu(self) -> QMenu | None:
+        """Return a QMenu with toggle actions for all docks and toolbars.
+
+        Mirrors QMainWindow.createPopupMenu(). Returns None if there are
+        no docks or toolbars registered.
+        """
+        docks = list(self._dock_map)
+        toolbars = self._tool_bars
+        if not docks and not toolbars:
+            return None
+        menu = QMenu(self)
+        for dock in docks:
+            menu.addAction(dock.toggleViewAction())
+        if docks and toolbars:
+            menu.addSeparator()
+        for toolbar in toolbars:
+            menu.addAction(toolbar.toggleViewAction())
+        return menu
 
     # ------------------------------------------------------------------
     # State persistence (mirrors QMainWindow.saveState / restoreState)
