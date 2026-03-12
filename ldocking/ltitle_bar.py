@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -38,6 +38,7 @@ class LTitleBar(QWidget):
         self._dragging = False
 
         self.setAutoFillBackground(True)
+        self.setObjectName("dockTitleBar")
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -81,17 +82,15 @@ class LTitleBar(QWidget):
 
     def _build_ui(self) -> None:
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 2, 2)
-        layout.setSpacing(2)
+        m = self.style().pixelMetric(QStyle.PixelMetric.PM_DockWidgetTitleMargin)
+        layout.setContentsMargins(m, 1, 1, 1)
+        layout.setSpacing(1)
 
         self._label = QLabel(self._title)
         self._label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        font = QFont()
-        font.setBold(True)
-        font.setPointSize(8)
-        self._label.setFont(font)
 
-        btn_size = QSize(16, 16)
+        icon_size = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize)
+        btn_size = QSize(icon_size, icon_size)
 
         self._float_btn = QToolButton()
         self._float_btn.setFixedSize(btn_size)
@@ -113,8 +112,8 @@ class LTitleBar(QWidget):
         layout.addWidget(self._float_btn)
         layout.addWidget(self._close_btn)
 
-        self.setMinimumHeight(22)
-        self.setMaximumHeight(24)
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(16777215)
 
     # ------------------------------------------------------------------
     # Events

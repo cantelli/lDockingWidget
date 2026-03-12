@@ -26,6 +26,14 @@ class LDockArea(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _AREA_NAMES = {
+            Qt.DockWidgetArea.LeftDockWidgetArea:   "dockAreaLeft",
+            Qt.DockWidgetArea.RightDockWidgetArea:  "dockAreaRight",
+            Qt.DockWidgetArea.TopDockWidgetArea:    "dockAreaTop",
+            Qt.DockWidgetArea.BottomDockWidgetArea: "dockAreaBottom",
+        }
+        self.setObjectName(_AREA_NAMES.get(area_side, "dockArea"))
         self._area_side = area_side
         self._docks: list[LDockWidget] = []
         self._tab_area: LDockTabArea | None = None

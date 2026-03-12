@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QPainter, QPalette
 from PySide6.QtWidgets import QWidget
 
 
@@ -32,9 +32,11 @@ class LDropIndicator(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor(0, 100, 255, 80)
-        painter.fillRect(self.rect(), color)
-        # Outline
-        outline = QColor(0, 100, 255, 200)
+        highlight = self.palette().color(QPalette.ColorRole.Highlight)
+        fill = QColor(highlight)
+        fill.setAlpha(60)
+        outline = QColor(highlight)
+        outline.setAlpha(180)
+        painter.fillRect(self.rect(), fill)
         painter.setPen(outline)
-        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))

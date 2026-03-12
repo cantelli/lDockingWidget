@@ -50,6 +50,7 @@ class LMainWindow(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._central_widget: QWidget | None = None
         self._menu_bar: QMenuBar | None = None
         self._status_bar: QStatusBar | None = None

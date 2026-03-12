@@ -64,6 +64,7 @@ class LDockWidget(QWidget):
 
     def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._title = title
         self._content_widget: QWidget | None = None
         self._custom_title_bar: QWidget | None = None
@@ -248,6 +249,8 @@ class LDockWidget(QWidget):
 
         # Content area
         self._content_container = QWidget()
+        self._content_container.setObjectName("dockContent")
+        self._content_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._content_layout = QVBoxLayout(self._content_container)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._outer_layout.addWidget(self._content_container, 1)
