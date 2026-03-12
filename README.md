@@ -17,6 +17,33 @@ pip install -e .   # editable from repo root
 # or copy the ldocking/ directory into your project
 ```
 
+## Monkey Patch (zero-code migration)
+
+If you have an existing PySide6 app and want to swap in `LMainWindow`/`LDockWidget` without touching any import lines, add one import at the very top of `main.py` — before any other PySide6 imports:
+
+```python
+import ldocking.monkey   # must be the first import in main.py
+
+# All subsequent imports now get the L* versions automatically:
+from PySide6.QtWidgets import QMainWindow, QDockWidget   # → LMainWindow, LDockWidget
+```
+
+After that, every `QMainWindow()` and `QDockWidget()` call in your app creates the L* replacement. No other code changes are needed.
+
+### Monkey patch API
+
+```python
+import ldocking.monkey as monkey
+
+monkey.patch()        # apply replacements (called automatically on import)
+monkey.unpatch()      # restore original Qt classes
+monkey.is_patched()   # → bool
+```
+
+> **Import order matters.** Any `from PySide6.QtWidgets import QMainWindow` that runs *before* `import ldocking.monkey` will get the original Qt class. Place the monkey-patch import first.
+
+---
+
 ## Quick Start
 
 ```python

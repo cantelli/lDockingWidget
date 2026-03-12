@@ -19,9 +19,17 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow
+from PySide6.QtWidgets import QApplication, QLabel
 
 from ldocking import LDockWidget, LMainWindow, LeftDockWidgetArea, RightDockWidgetArea
+
+# Use the real Qt classes for baseline comparisons, even if monkey patch is active.
+try:
+    from ldocking.monkey import _ORIG as _QT_ORIG
+    _RealQMainWindow = _QT_ORIG["QMainWindow"]
+    _RealQDockWidget = _QT_ORIG["QDockWidget"]
+except ImportError:
+    from PySide6.QtWidgets import QMainWindow as _RealQMainWindow, QDockWidget as _RealQDockWidget  # type: ignore
 
 # Tolerance per color channel (accounts for compositing and sub-pixel rendering)
 COLOR_TOL = 35
@@ -75,9 +83,9 @@ def _make_l_window(title="D"):
 
 
 def _make_qt_window(title="D"):
-    mw = QMainWindow()
+    mw = _RealQMainWindow()
     mw.resize(300, 200)
-    dock = QDockWidget(title, mw)
+    dock = _RealQDockWidget(title, mw)
     dock.setWidget(QLabel(title))
     mw.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
     return mw, dock

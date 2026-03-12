@@ -40,6 +40,7 @@ Run `pytest -v` after any changes. All tests run headlessly via `QT_QPA_PLATFORM
 | `ldocking/ltitle_bar.py` | Custom title bar; emits drag/float/close signals |
 | `ldocking/ldrag_manager.py` | Singleton event filter; drag→float→drop state machine |
 | `ldocking/ldrop_indicator.py` | Semi-transparent overlay shown during drag |
+| `ldocking/monkey.py` | Auto-replaces `PySide6.QtWidgets.QMainWindow/QDockWidget` with L* versions on import |
 
 ## Architecture Notes
 
@@ -87,4 +88,6 @@ LMainWindow (QVBoxLayout)
 - Private helpers prefixed with `_`.
 - No Qt signal connections in `__init__` of classes that are not yet fully constructed — connect signals after `super().__init__()` and full field setup.
 - `setParent(None)` before `deleteLater()` when removing widgets from layouts.
-- `WA_StyledBackground` must be set on any `QWidget` subclass that needs QSS `background-color` rules to work. Currently set on `LMainWindow`, `LDockWidget`, and `LDockArea`.
+- `WA_StyledBackground` must be set on any `QWidget` subclass that needs QSS `background-color` rules to work. Currently set on `LMainWindow`, `LDockWidget`, `LDockArea`, and `LTitleBar`.
+- `ldocking/monkey.py` patches `PySide6.QtWidgets` module attributes at import time. `_ORIG` is captured at module load (not inside `patch()`), so calling `patch()` twice is safe. Tests that need real Qt classes must use `monkey._ORIG["QMainWindow"]` / `monkey._ORIG["QDockWidget"]` rather than importing from `PySide6.QtWidgets` directly (the patched names would return L* classes).
+- **Import order for monkey patch**: `import ldocking.monkey` must appear before any other import that pulls in `QMainWindow` or `QDockWidget`. Place it as the very first import in `main.py`.
