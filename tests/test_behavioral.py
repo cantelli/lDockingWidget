@@ -5,7 +5,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtWidgets import QLabel
 
 from ldocking import (
@@ -26,6 +26,7 @@ from ldocking import (
     ForceTabbedDocks,
     AnimatedDocks,
 )
+from ldocking.ldrag_manager import _DropTarget
 
 
 def _dock(name: str) -> LDockWidget:
@@ -156,6 +157,24 @@ def test_top_level_changed_on_float(qapp):
 
     dock.setFloating(False)
     assert False in received
+
+
+def test_floating_title_drag_preserves_cursor_offset(qapp):
+    """Dragging a floating dock moves it relative to the cursor's original hit point."""
+    win = LMainWindow()
+    win.resize(800, 600)
+    dock = _dock("d")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    dock.setFloating(True)
+    qapp.processEvents()
+
+    start_global = dock.mapToGlobal(QPoint(17, 9))
+    dock._on_drag_started(start_global)
+    assert dock._float_drag_offset == QPoint(17, 9)
+
+    move_global = start_global + QPoint(40, 30)
+    dock._on_title_bar_move(move_global)
+    assert dock.pos() == move_global - QPoint(17, 9)
 
 
 # ------------------------------------------------------------------
@@ -466,6 +485,109 @@ def test_drag_manager_targets_tab_group_bounds(qapp):
     assert target.target_id == "da"
     assert target.target_rect is not None
     assert target.target_rect.height() == area._tab_area.height()
+    win.hide()
+
+
+def test_drag_indicator_tab_rect_stays_inside_hovered_group_bounds(qapp):
+    """Tab preview rectangle is centered inside the hovered target bounds with margin."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    target_rect = QRect(100, 120, 300, 180)
+    dm = LDragManager.instance()
+    target = _DropTarget(
+        win,
+        LeftDockWidgetArea,
+        "tab",
+        target_id="anchor",
+        target_rect=target_rect,
+    )
+
+    rect = dm._compute_indicator_rect(target)
+
+    assert target_rect.contains(rect.center())
+    assert rect.left() >= target_rect.left()
+    assert rect.top() >= target_rect.top()
+    assert rect.right() <= target_rect.right()
+    assert rect.bottom() <= target_rect.bottom()
+
+
+def test_drag_indicator_side_rect_uses_target_subtree_bounds(qapp):
+    """Side preview rectangle stays inside the hovered subtree bounds, not full-window strips."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    target_rect = QRect(100, 120, 300, 180)
+    dm = LDragManager.instance()
+    target = _DropTarget(
+        win,
+        LeftDockWidgetArea,
+        "side",
+        target_id="anchor",
+        target_rect=target_rect,
+        relative_side=BottomDockWidgetArea,
+    )
+
+    rect = dm._compute_indicator_rect(target)
+
+    assert rect.left() >= target_rect.left()
+    assert rect.right() <= target_rect.right()
+    assert rect.top() >= target_rect.top()
+    assert rect.bottom() <= target_rect.bottom()
+    assert rect.width() < target_rect.width()
+
+
+def test_drag_indicator_central_edge_rect_uses_central_bounds(qapp):
+    """Central-edge previews are bounded by the central widget, not the full main window."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    central = QLabel("central")
+    central.resize(500, 360)
+    win.setCentralWidget(central)
+    win.show()
+    qapp.processEvents()
+
+    dm = LDragManager.instance()
+    central_rect = QRect(central.mapToGlobal(central.rect().topLeft()), central.size())
+    target = _DropTarget(
+        win,
+        LeftDockWidgetArea,
+        "area",
+        target_key="central",
+        target_rect=central_rect,
+    )
+
+    rect = dm._compute_indicator_rect(target)
+
+    assert rect.left() >= central_rect.left()
+    assert rect.top() >= central_rect.top()
+    assert rect.right() <= central_rect.right()
+    assert rect.bottom() <= central_rect.bottom()
+    assert rect.width() < central_rect.width()
+    win.hide()
+
+
+def test_drag_indicator_root_edge_rect_uses_window_bounds(qapp):
+    """Root-edge previews still use the larger main-window frame bounds."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    win.show()
+    qapp.processEvents()
+
+    dm = LDragManager.instance()
+    mw_global = QRect(win.mapToGlobal(win.rect().topLeft()), win.size())
+    target = _DropTarget(
+        win,
+        LeftDockWidgetArea,
+        "area",
+        target_rect=mw_global,
+    )
+
+    rect = dm._compute_indicator_rect(target)
+
+    assert rect.left() >= mw_global.left()
+    assert rect.top() >= mw_global.top()
+    assert rect.right() <= mw_global.right()
+    assert rect.bottom() <= mw_global.bottom()
+    assert rect.height() > mw_global.height() // 2
     win.hide()
 
 

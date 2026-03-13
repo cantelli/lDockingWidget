@@ -5,7 +5,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtWidgets import QLabel, QToolBar
+from PySide6.QtWidgets import QLabel, QToolBar, QWidget
+
+import ldocking.monkey as monkey
 
 from ldocking import (
     LDockWidget,
@@ -29,6 +31,20 @@ def _make_toolbar(name: str) -> QToolBar:
     toolbar.setObjectName(name)
     toolbar.addAction(name)
     return toolbar
+
+
+def _make_native_dock(name: str) -> NativeQDockWidget:
+    dock = NativeQDockWidget(name)
+    dock.setObjectName(name)
+    dock.setWidget(QLabel(name))
+    return dock
+
+
+def _make_native_main_window() -> NativeQMainWindow:
+    win = NativeQMainWindow()
+    win.setCentralWidget(QWidget())
+    win.resize(800, 600)
+    return win
 
 
 def test_save_restore_basic(qapp):
@@ -213,6 +229,18 @@ def test_save_state_uses_live_layout_membership(qapp):
     assert payload["docks"][0]["area"] == LeftDockWidgetArea.value
 
 
+def test_save_state_omits_legacy_area_trees(qapp):
+    """Current saveState payloads use content_tree and no longer emit area_trees."""
+    win = LMainWindow()
+    win.addDockWidget(LeftDockWidgetArea, _make_dock("da"))
+    win.addDockWidget(RightDockWidgetArea, _make_dock("db"))
+
+    payload = json.loads(bytes(win.saveState()).decode())
+
+    assert "content_tree" in payload
+    assert "area_trees" not in payload
+
+
 def test_restore_prefers_content_tree_area_state_over_area_trees(qapp):
     """restoreState uses embedded content_tree area state even if area_trees is wrong."""
     win = LMainWindow()
@@ -236,6 +264,56 @@ def test_restore_prefers_content_tree_area_state_over_area_trees(qapp):
     assert win.dockWidgetArea(db) == RightDockWidgetArea
 
 
+def test_restore_equivalent_layout_from_all_legacy_sources(qapp):
+    """content_tree, legacy area_trees, and flat dock entries restore the same simple layout."""
+    source = LMainWindow()
+    da = _make_dock("da")
+    db = _make_dock("db")
+    source.addDockWidget(LeftDockWidgetArea, da)
+    source.addDockWidget(RightDockWidgetArea, db)
+    payload = json.loads(bytes(source.saveState()).decode())
+
+    content_tree_payload = json.loads(json.dumps(payload))
+
+    area_trees_payload = {
+        "format_version": payload["format_version"],
+        "state_version": payload["state_version"],
+        "outer_splitter": payload["outer_splitter"],
+        "inner_splitter": payload["inner_splitter"],
+        "docks": payload["docks"],
+        "current_tabs": payload["current_tabs"],
+        "area_trees": {
+            str(LeftDockWidgetArea.value): {"type": "dock", "id": "da"},
+            str(RightDockWidgetArea.value): {"type": "dock", "id": "db"},
+            str(TopDockWidgetArea.value): None,
+            str(BottomDockWidgetArea.value): None,
+        },
+    }
+
+    flat_payload = {
+        "format_version": payload["format_version"],
+        "state_version": payload["state_version"],
+        "outer_splitter": payload["outer_splitter"],
+        "inner_splitter": payload["inner_splitter"],
+        "docks": payload["docks"],
+        "current_tabs": payload["current_tabs"],
+    }
+
+    def restore_from(raw_payload: dict[str, object]) -> tuple[Qt.DockWidgetArea, Qt.DockWidgetArea]:
+        win = LMainWindow()
+        da_live = _make_dock("da")
+        db_live = _make_dock("db")
+        win.addDockWidget(BottomDockWidgetArea, da_live)
+        win.addDockWidget(TopDockWidgetArea, db_live)
+        assert win.restoreState(QByteArray(json.dumps(raw_payload).encode())) is True
+        return win.dockWidgetArea(da_live), win.dockWidgetArea(db_live)
+
+    expected = (LeftDockWidgetArea, RightDockWidgetArea)
+    assert restore_from(content_tree_payload) == expected
+    assert restore_from(area_trees_payload) == expected
+    assert restore_from(flat_payload) == expected
+
+
 def test_content_tree_leaf_state_tracks_docked_mutations(qapp):
     """Docked mutations update the in-memory content_tree leaf area state."""
     win = LMainWindow()
@@ -249,6 +327,25 @@ def test_content_tree_leaf_state_tracks_docked_mutations(qapp):
     assert leaf is not None
     assert leaf.area_state["type"] == "tabs"
     assert [child["id"] for child in leaf.area_state["children"]] == ["da", "db"]
+
+
+def test_drop_and_direct_add_share_normalized_area_state(qapp):
+    """Equivalent placements through addDockWidget and _drop_docks normalize the same way."""
+    direct = LMainWindow()
+    dropped = LMainWindow()
+    for title in ("a", "b"):
+        direct.addDockWidget(LeftDockWidgetArea, _make_dock(title))
+        dropped.addDockWidget(LeftDockWidgetArea, _make_dock(title))
+
+    direct.addDockWidget(LeftDockWidgetArea, _make_dock("c"))
+    drop_c = _make_dock("c")
+    dropped._drop_docks(LeftDockWidgetArea, [drop_c], mode="area")
+
+    direct_leaf = direct._leaf_for_key("left")
+    dropped_leaf = dropped._leaf_for_key("left")
+    assert direct_leaf is not None
+    assert dropped_leaf is not None
+    assert direct_leaf.area_state == dropped_leaf.area_state
 
 
 def test_save_restore_toolbar_state_round_trip(qapp):
@@ -394,3 +491,304 @@ def test_restore_dock_widget_late_tabbed_restore(qapp):
     assert win.restoreDockWidget(second_live) is True
     assert win.dockWidgetArea(second_live) == LeftDockWidgetArea
     assert second_live in win.tabifiedDockWidgets(first_live)
+
+
+def test_restore_dock_widget_matches_direct_tab_insert_state(qapp):
+    """Late restore into a saved tab group matches the direct docking state shape."""
+    source = LMainWindow()
+    first = _make_dock("first")
+    second = _make_dock("second")
+    source.addDockWidget(LeftDockWidgetArea, first)
+    source.addDockWidget(LeftDockWidgetArea, second)
+    state = source.saveState()
+
+    restored = LMainWindow()
+    restored_first = _make_dock("first")
+    restored.addDockWidget(RightDockWidgetArea, restored_first)
+    assert restored.restoreState(state) is True
+    restored_second = _make_dock("second")
+    assert restored.restoreDockWidget(restored_second) is True
+
+    direct = LMainWindow()
+    direct_first = _make_dock("first")
+    direct_second = _make_dock("second")
+    direct.addDockWidget(LeftDockWidgetArea, direct_first)
+    direct.addDockWidget(LeftDockWidgetArea, direct_second)
+
+    restored_leaf = restored._leaf_for_key("left")
+    direct_leaf = direct._leaf_for_key("left")
+    assert restored_leaf is not None
+    assert direct_leaf is not None
+    assert restored_leaf.area_state == direct_leaf.area_state
+
+
+def test_restore_dock_widget_uses_saved_nested_target_when_available(qapp):
+    """Late restore uses the saved nested split target instead of top-level fallback."""
+    source = LMainWindow()
+    source.setDockOptions(source.dockOptions() | LMainWindow.AllowNestedDocks)
+    anchor = _make_dock("anchor")
+    sibling = _make_dock("sibling")
+    nested = _make_dock("nested")
+    source.addDockWidget(RightDockWidgetArea, anchor)
+    source.addDockWidget(RightDockWidgetArea, sibling)
+    source._drop_docks(
+        RightDockWidgetArea,
+        [nested],
+        mode="side",
+        target_id="anchor",
+        side=BottomDockWidgetArea,
+    )
+    state = source.saveState()
+
+    win = LMainWindow()
+    win.setDockOptions(win.dockOptions() | LMainWindow.AllowNestedDocks)
+    anchor_live = _make_dock("anchor")
+    sibling_live = _make_dock("sibling")
+    win.addDockWidget(LeftDockWidgetArea, anchor_live)
+    win.addDockWidget(TopDockWidgetArea, sibling_live)
+
+    assert win.restoreState(state) is True
+    nested_live = _make_dock("nested")
+    assert win.restoreDockWidget(nested_live) is True
+    right_leaf = win._leaf_for_key("right")
+    assert right_leaf is not None
+    assert right_leaf.area_state["type"] == "split"
+    tabs = right_leaf.area_state["children"][0]
+    assert tabs["type"] == "tabs"
+    assert [child["id"] for child in tabs["children"]] == ["anchor", "sibling"]
+    assert right_leaf.area_state["children"][1]["id"] == "nested"
+
+
+def test_restore_dock_widget_falls_back_when_saved_target_missing(qapp):
+    """Late restore falls back to top-level area placement when the saved target is gone."""
+    source = LMainWindow()
+    source.setDockOptions(source.dockOptions() | LMainWindow.AllowNestedDocks)
+    anchor = _make_dock("anchor")
+    sibling = _make_dock("sibling")
+    nested = _make_dock("nested")
+    source.addDockWidget(RightDockWidgetArea, anchor)
+    source.addDockWidget(RightDockWidgetArea, sibling)
+    source._drop_docks(
+        RightDockWidgetArea,
+        [nested],
+        mode="side",
+        target_id="anchor",
+        side=BottomDockWidgetArea,
+    )
+    state = source.saveState()
+
+    win = LMainWindow()
+    sibling_live = _make_dock("sibling")
+    win.addDockWidget(LeftDockWidgetArea, sibling_live)
+
+    assert win.restoreState(state) is True
+    nested_live = _make_dock("nested")
+    assert win.restoreDockWidget(nested_live) is True
+    assert win.dockWidgetArea(nested_live) == RightDockWidgetArea
+
+
+def test_restore_state_accepts_native_qt_save_state_for_docks(qapp):
+    """restoreState accepts native Qt saveState blobs for dock layout."""
+    native = _make_native_main_window()
+    first = _make_native_dock("first")
+    second = _make_native_dock("second")
+    right = _make_native_dock("right")
+    floating = _make_native_dock("floating")
+    native.addDockWidget(LeftDockWidgetArea, first)
+    native.addDockWidget(LeftDockWidgetArea, second)
+    native.tabifyDockWidget(first, second)
+    native.addDockWidget(RightDockWidgetArea, right)
+    native.addDockWidget(BottomDockWidgetArea, floating)
+    floating.setFloating(True)
+    floating.setGeometry(120, 140, 260, 210)
+    native.show()
+    qapp.processEvents()
+
+    state = native.saveState()
+
+    win = LMainWindow()
+    first_live = _make_dock("first")
+    second_live = _make_dock("second")
+    right_live = _make_dock("right")
+    floating_live = _make_dock("floating")
+    for dock in (first_live, second_live, right_live, floating_live):
+        win.addDockWidget(TopDockWidgetArea, dock)
+
+    assert win.restoreState(state) is True
+    assert win.dockWidgetArea(first_live) == LeftDockWidgetArea
+    assert win.dockWidgetArea(second_live) == LeftDockWidgetArea
+    assert second_live in win.tabifiedDockWidgets(first_live)
+    assert win.dockWidgetArea(right_live) == RightDockWidgetArea
+    assert floating_live.isFloating()
+    geometry = floating_live.geometry()
+    assert (geometry.x(), geometry.y(), geometry.width(), geometry.height()) == (120, 140, 260, 210)
+
+
+def test_restore_state_accepts_native_qt_save_state_for_toolbar_shell(qapp):
+    """restoreState imports toolbar areas, breaks, and corners from native Qt state."""
+    native = _make_native_main_window()
+    top = _make_toolbar("top")
+    top2 = _make_toolbar("top2")
+    left = _make_toolbar("left")
+    right = _make_toolbar("right")
+    bottom = _make_toolbar("bottom")
+    native.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    native.addToolBar(Qt.ToolBarArea.TopToolBarArea, top2)
+    native.insertToolBarBreak(top2)
+    native.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    native.addToolBar(Qt.ToolBarArea.RightToolBarArea, right)
+    native.addToolBar(Qt.ToolBarArea.BottomToolBarArea, bottom)
+    native.setCorner(Qt.Corner.TopLeftCorner, LeftDockWidgetArea)
+    native.setCorner(Qt.Corner.BottomRightCorner, RightDockWidgetArea)
+    native.show()
+    qapp.processEvents()
+
+    state = native.saveState()
+
+    win = LMainWindow()
+    top_live = _make_toolbar("top")
+    top2_live = _make_toolbar("top2")
+    left_live = _make_toolbar("left")
+    right_live = _make_toolbar("right")
+    bottom_live = _make_toolbar("bottom")
+    for toolbar in (top_live, top2_live, left_live, right_live, bottom_live):
+        win.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+    assert win.restoreState(state) is True
+    assert win.toolBarArea(top_live) == Qt.ToolBarArea.TopToolBarArea
+    assert win.toolBarArea(top2_live) == Qt.ToolBarArea.TopToolBarArea
+    assert win.toolBarArea(left_live) == Qt.ToolBarArea.LeftToolBarArea
+    assert win.toolBarArea(right_live) == Qt.ToolBarArea.RightToolBarArea
+    assert win.toolBarArea(bottom_live) == Qt.ToolBarArea.BottomToolBarArea
+    assert win.toolBarBreak(top2_live) is True
+    assert win.toolBars()[:5] == [top_live, top2_live, left_live, right_live, bottom_live]
+    assert win.corner(Qt.Corner.TopLeftCorner) == LeftDockWidgetArea
+    assert win.corner(Qt.Corner.BottomRightCorner) == RightDockWidgetArea
+
+
+def test_save_qt_state_restores_in_native_qt_for_supported_subset(qapp):
+    """saveQtState exports a native Qt state blob for the supported subset."""
+    win = LMainWindow()
+    first = _make_dock("first")
+    second = _make_dock("second")
+    right = _make_dock("right")
+    floating = _make_dock("floating")
+    win.addDockWidget(LeftDockWidgetArea, first)
+    win.addDockWidget(LeftDockWidgetArea, second)
+    win.addDockWidget(RightDockWidgetArea, right)
+    win.addDockWidget(BottomDockWidgetArea, floating)
+    win.tabifyDockWidget(first, second)
+    floating.setFloating(True)
+    floating.setGeometry(90, 110, 240, 190)
+
+    top = _make_toolbar("top")
+    top2 = _make_toolbar("top2")
+    left = _make_toolbar("left")
+    right_tb = _make_toolbar("right_tb")
+    bottom = _make_toolbar("bottom")
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top2)
+    win.insertToolBarBreak(top2)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, right_tb)
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, bottom)
+    win.setCorner(Qt.Corner.TopLeftCorner, LeftDockWidgetArea)
+    win.setCorner(Qt.Corner.BottomRightCorner, RightDockWidgetArea)
+
+    state = win.saveQtState()
+
+    native = _make_native_main_window()
+    first_native = _make_native_dock("first")
+    second_native = _make_native_dock("second")
+    right_native = _make_native_dock("right")
+    floating_native = _make_native_dock("floating")
+    for dock in (first_native, second_native, right_native, floating_native):
+        native.addDockWidget(TopDockWidgetArea, dock)
+    top_native = _make_toolbar("top")
+    top2_native = _make_toolbar("top2")
+    left_native = _make_toolbar("left")
+    right_tb_native = _make_toolbar("right_tb")
+    bottom_native = _make_toolbar("bottom")
+    for toolbar in (top_native, top2_native, left_native, right_tb_native, bottom_native):
+        native.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+    assert native.restoreState(state) is True
+    native.show()
+    qapp.processEvents()
+
+    assert native.dockWidgetArea(first_native) == LeftDockWidgetArea
+    assert native.dockWidgetArea(second_native) == LeftDockWidgetArea
+    assert second_native in native.tabifiedDockWidgets(first_native)
+    assert native.dockWidgetArea(right_native) == RightDockWidgetArea
+    assert floating_native.isFloating()
+    geometry = floating_native.geometry()
+    assert (geometry.x(), geometry.y(), geometry.width(), geometry.height()) == (90, 110, 240, 190)
+    assert native.toolBarArea(top_native) == Qt.ToolBarArea.TopToolBarArea
+    assert native.toolBarArea(top2_native) == Qt.ToolBarArea.TopToolBarArea
+    assert native.toolBarArea(left_native) == Qt.ToolBarArea.LeftToolBarArea
+    assert native.toolBarArea(right_tb_native) == Qt.ToolBarArea.RightToolBarArea
+    assert native.toolBarArea(bottom_native) == Qt.ToolBarArea.BottomToolBarArea
+    assert native.toolBarBreak(top2_native) is True
+    assert native.corner(Qt.Corner.TopLeftCorner) == LeftDockWidgetArea
+    assert native.corner(Qt.Corner.BottomRightCorner) == RightDockWidgetArea
+
+
+def test_restore_state_native_qt_skips_missing_live_dock_ids(qapp):
+    """Native-state import restores known docks and ignores absent dock ids."""
+    native = _make_native_main_window()
+    first = _make_native_dock("first")
+    missing = _make_native_dock("missing")
+    native.addDockWidget(LeftDockWidgetArea, first)
+    native.addDockWidget(RightDockWidgetArea, missing)
+    state = native.saveState()
+
+    win = LMainWindow()
+    first_live = _make_dock("first")
+    win.addDockWidget(TopDockWidgetArea, first_live)
+
+    assert win.restoreState(state) is True
+    assert win.dockWidgetArea(first_live) == LeftDockWidgetArea
+    assert win._pending_dock_restore == {}
+
+
+def test_restore_state_native_qt_skips_missing_live_toolbar_ids(qapp):
+    """Native-state import restores known toolbars and ignores absent ids."""
+    native = _make_native_main_window()
+    top = _make_toolbar("top")
+    missing = _make_toolbar("missing")
+    native.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    native.addToolBar(Qt.ToolBarArea.RightToolBarArea, missing)
+    state = native.saveState()
+
+    win = LMainWindow()
+    top_live = _make_toolbar("top")
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, top_live)
+
+    assert win.restoreState(state) is True
+    assert win.toolBarArea(top_live) == Qt.ToolBarArea.TopToolBarArea
+
+
+def test_restore_state_native_qt_flattens_same_area_non_tab_groups(qapp):
+    """Native same-area non-tab layouts degrade to ldocking's side-area split model."""
+    native = _make_native_main_window()
+    native.setDockOptions(NativeQMainWindow.DockOption.AnimatedDocks)
+    docks = [_make_native_dock(name) for name in ("a", "b", "c")]
+    for dock in docks:
+        native.addDockWidget(LeftDockWidgetArea, dock)
+    native.show()
+    qapp.processEvents()
+    state = native.saveState()
+
+    win = LMainWindow()
+    live_docks = [_make_dock(name) for name in ("a", "b", "c")]
+    for dock in live_docks:
+        win.addDockWidget(TopDockWidgetArea, dock)
+
+    assert win.restoreState(state) is True
+    assert [win.dockWidgetArea(dock) for dock in live_docks] == [LeftDockWidgetArea] * 3
+    assert all(win.tabifiedDockWidgets(dock) == [] for dock in live_docks)
+    left_leaf = win._leaf_for_key("left")
+    assert left_leaf is not None
+    assert left_leaf.area_state["type"] == "split"
+NativeQDockWidget = monkey._ORIG["QDockWidget"]
+NativeQMainWindow = monkey._ORIG["QMainWindow"]

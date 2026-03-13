@@ -241,6 +241,8 @@ class LDockWidget(QWidget):
         self._floating = True
         self._title_bar.set_float_button_icon(True)
         self.show()
+        self.raise_()
+        self.activateWindow()
         self.topLevelChanged.emit(True)
 
     def _dock_back(self) -> None:
@@ -261,6 +263,10 @@ class LDockWidget(QWidget):
         self._main_window.addDockWidget(area, self)
         self.setWindowFlags(Qt.WindowType.Widget)   # clear stale floating flags
         self._title_bar.set_float_button_icon(False)
+        self.unsetCursor()
+        if self._main_window is not None:
+            self._main_window.raise_()
+            self._main_window.activateWindow()
         self.topLevelChanged.emit(False)
 
     # ------------------------------------------------------------------
@@ -312,8 +318,11 @@ class LDockWidget(QWidget):
         if not bool(self._features & DockWidgetMovable):
             return
         if self._floating:
-            self._float_drag_offset = global_pos - self.pos()
+            top_left = self.frameGeometry().topLeft()
+            self._float_drag_offset = global_pos - top_left
             self._float_moving = True       # native window move mode
+            self.raise_()
+            self.activateWindow()
         else:
             from .ldrag_manager import LDragManager
             LDragManager.instance().begin_drag(self, global_pos)

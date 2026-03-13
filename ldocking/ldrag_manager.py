@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 _EDGE_FRACTION = 0.20
 _AREA_CENTER_FRACTION = 0.55
+_INDICATOR_MARGIN = 8
 
 
 @dataclass(frozen=True)
@@ -85,9 +86,14 @@ class LDragManager(QObject):
         )
         dock.setWindowFlags(flags)
         dock.resize(dock.sizeHint().expandedTo(dock.minimumSize()))
-        self._drag_offset = QPoint(dock.width() // 2, 12)
+        dock_top_left = dock.mapToGlobal(QPoint(0, 0))
+        self._drag_offset = global_pos - dock_top_left
+        self._drag_offset.setX(max(0, min(self._drag_offset.x(), max(0, dock.width() - 1))))
+        self._drag_offset.setY(max(0, min(self._drag_offset.y(), max(0, dock.height() - 1))))
         dock.move(global_pos - self._drag_offset)
         dock.show()
+        dock.raise_()
+        dock.activateWindow()
         dock._floating = True
         for payload_dock in self._payload:
             payload_dock._floating = True
@@ -267,8 +273,18 @@ class LDragManager(QObject):
                 )
 
             if self._compute_area_tab_rect(area).contains(area_local):
-                return _DropTarget(mw, area._area_side, "tab")
-            return _DropTarget(mw, area._area_side, "area")
+                return _DropTarget(
+                    mw,
+                    area._area_side,
+                    "tab",
+                    target_rect=QRect(area.mapToGlobal(area.rect().topLeft()), area.size()),
+                )
+            return _DropTarget(
+                mw,
+                area._area_side,
+                "area",
+                target_rect=QRect(area.mapToGlobal(area.rect().topLeft()), area.size()),
+            )
 
         central = mw.centralWidget() or getattr(mw, "_central_placeholder", None)
         if central is not None and central.isVisible():
@@ -276,20 +292,47 @@ class LDragManager(QObject):
             if central.rect().contains(central_local):
                 rect = central.rect()
                 edge = self._relative_side(rect, central_local)
-                return _DropTarget(mw, edge, "area", target_key="central")
+                return _DropTarget(
+                    mw,
+                    edge,
+                    "area",
+                    target_key="central",
+                    target_rect=QRect(central.mapToGlobal(rect.topLeft()), rect.size()),
+                )
 
         w = mw.width()
         h = mw.height()
+        mw_global = QRect(mw.mapToGlobal(mw.rect().topLeft()), mw.size())
         x, y = local.x(), local.y()
         f = _EDGE_FRACTION
         if x < w * f:
-            return _DropTarget(mw, _Qt.DockWidgetArea.LeftDockWidgetArea, "area")
+            return _DropTarget(
+                mw,
+                _Qt.DockWidgetArea.LeftDockWidgetArea,
+                "area",
+                target_rect=mw_global,
+            )
         if x > w * (1 - f):
-            return _DropTarget(mw, _Qt.DockWidgetArea.RightDockWidgetArea, "area")
+            return _DropTarget(
+                mw,
+                _Qt.DockWidgetArea.RightDockWidgetArea,
+                "area",
+                target_rect=mw_global,
+            )
         if y < h * f:
-            return _DropTarget(mw, _Qt.DockWidgetArea.TopDockWidgetArea, "area")
+            return _DropTarget(
+                mw,
+                _Qt.DockWidgetArea.TopDockWidgetArea,
+                "area",
+                target_rect=mw_global,
+            )
         if y > h * (1 - f):
-            return _DropTarget(mw, _Qt.DockWidgetArea.BottomDockWidgetArea, "area")
+            return _DropTarget(
+                mw,
+                _Qt.DockWidgetArea.BottomDockWidgetArea,
+                "area",
+                target_rect=mw_global,
+            )
         return None
 
     def _compute_indicator_rect(self, target: _DropTarget) -> QRect:
@@ -298,10 +341,16 @@ class LDragManager(QObject):
         mw = target.main_window
         if target.mode == "tab":
             if target.target_rect is not None:
-                width = max(48, int(target.target_rect.width() * _AREA_CENTER_FRACTION))
-                height = max(32, int(target.target_rect.height() * _AREA_CENTER_FRACTION))
+                bounded = target.target_rect.adjusted(
+                    _INDICATOR_MARGIN,
+                    _INDICATOR_MARGIN,
+                    -_INDICATOR_MARGIN,
+                    -_INDICATOR_MARGIN,
+                )
+                width = max(48, int(bounded.width() * _AREA_CENTER_FRACTION))
+                height = max(32, int(bounded.height() * _AREA_CENTER_FRACTION))
                 rect = QRect(0, 0, width, height)
-                rect.moveCenter(target.target_rect.center())
+                rect.moveCenter(bounded.center())
                 return rect
             area = mw._dock_areas[target.area_side]
             local_rect = self._compute_area_tab_rect(area)
@@ -315,55 +364,87 @@ class LDragManager(QObject):
             if target.relative_side == _Qt.DockWidgetArea.LeftDockWidgetArea:
                 width = max(24, target.target_rect.width() // 3)
                 return QRect(
-                    target.target_rect.left(),
-                    target.target_rect.top(),
+                    target.target_rect.left() + _INDICATOR_MARGIN,
+                    target.target_rect.top() + _INDICATOR_MARGIN,
                     width,
-                    target.target_rect.height(),
+                    max(24, target.target_rect.height() - (_INDICATOR_MARGIN * 2)),
                 )
             if target.relative_side == _Qt.DockWidgetArea.RightDockWidgetArea:
                 width = max(24, target.target_rect.width() // 3)
                 return QRect(
-                    target.target_rect.right() - width,
-                    target.target_rect.top(),
+                    target.target_rect.right() - width - _INDICATOR_MARGIN + 1,
+                    target.target_rect.top() + _INDICATOR_MARGIN,
                     width,
-                    target.target_rect.height(),
+                    max(24, target.target_rect.height() - (_INDICATOR_MARGIN * 2)),
                 )
             if target.relative_side == _Qt.DockWidgetArea.TopDockWidgetArea:
                 height = max(24, target.target_rect.height() // 3)
                 return QRect(
-                    target.target_rect.left(),
-                    target.target_rect.top(),
-                    target.target_rect.width(),
+                    target.target_rect.left() + _INDICATOR_MARGIN,
+                    target.target_rect.top() + _INDICATOR_MARGIN,
+                    max(24, target.target_rect.width() - (_INDICATOR_MARGIN * 2)),
                     height,
                 )
             height = max(24, target.target_rect.height() // 3)
             return QRect(
-                target.target_rect.left(),
-                target.target_rect.bottom() - height,
-                target.target_rect.width(),
+                target.target_rect.left() + _INDICATOR_MARGIN,
+                target.target_rect.bottom() - height - _INDICATOR_MARGIN + 1,
+                max(24, target.target_rect.width() - (_INDICATOR_MARGIN * 2)),
                 height,
             )
 
-        tl = mw.mapToGlobal(mw.rect().topLeft())
-        mw_global = QRect(tl, mw.size())
-        w, h = mw_global.width(), mw_global.height()
+        base_rect = target.target_rect
+        if base_rect is None:
+            tl = mw.mapToGlobal(mw.rect().topLeft())
+            base_rect = QRect(tl, mw.size())
+        w, h = base_rect.width(), base_rect.height()
         f = _EDGE_FRACTION
         if target.area_side == _Qt.DockWidgetArea.LeftDockWidgetArea:
-            return QRect(mw_global.left(), mw_global.top(), int(w * f), h)
+            width = max(24, int(w * f))
+            return QRect(
+                base_rect.left() + _INDICATOR_MARGIN,
+                base_rect.top() + _INDICATOR_MARGIN,
+                width,
+                max(24, h - (_INDICATOR_MARGIN * 2)),
+            )
         if target.area_side == _Qt.DockWidgetArea.RightDockWidgetArea:
-            return QRect(mw_global.right() - int(w * f), mw_global.top(), int(w * f), h)
+            width = max(24, int(w * f))
+            return QRect(
+                base_rect.right() - width - _INDICATOR_MARGIN + 1,
+                base_rect.top() + _INDICATOR_MARGIN,
+                width,
+                max(24, h - (_INDICATOR_MARGIN * 2)),
+            )
         if target.area_side == _Qt.DockWidgetArea.TopDockWidgetArea:
-            return QRect(mw_global.left(), mw_global.top(), w, int(h * f))
+            height = max(24, int(h * f))
+            return QRect(
+                base_rect.left() + _INDICATOR_MARGIN,
+                base_rect.top() + _INDICATOR_MARGIN,
+                max(24, w - (_INDICATOR_MARGIN * 2)),
+                height,
+            )
         if target.area_side == _Qt.DockWidgetArea.BottomDockWidgetArea:
-            return QRect(mw_global.left(), mw_global.bottom() - int(h * f), w, int(h * f))
-        return mw_global
+            height = max(24, int(h * f))
+            return QRect(
+                base_rect.left() + _INDICATOR_MARGIN,
+                base_rect.bottom() - height - _INDICATOR_MARGIN + 1,
+                max(24, w - (_INDICATOR_MARGIN * 2)),
+                height,
+            )
+        return base_rect
 
     def _compute_area_tab_rect(self, area: LDockArea) -> QRect:
         rect = area.rect()
-        width = max(48, int(rect.width() * _AREA_CENTER_FRACTION))
-        height = max(32, int(rect.height() * _AREA_CENTER_FRACTION))
+        bounded = rect.adjusted(
+            _INDICATOR_MARGIN,
+            _INDICATOR_MARGIN,
+            -_INDICATOR_MARGIN,
+            -_INDICATOR_MARGIN,
+        )
+        width = max(48, int(bounded.width() * _AREA_CENTER_FRACTION))
+        height = max(32, int(bounded.height() * _AREA_CENTER_FRACTION))
         tab_rect = QRect(0, 0, width, height)
-        tab_rect.moveCenter(rect.center())
+        tab_rect.moveCenter(bounded.center())
         return tab_rect
 
     def _relative_side(self, rect: QRect, point: QPoint):

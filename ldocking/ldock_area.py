@@ -129,6 +129,12 @@ class LDockArea(QWidget):
     def all_docks(self) -> list[LDockWidget]:
         return list(self._docks)
 
+    def tabified_docks(self, dock: LDockWidget) -> list[LDockWidget]:
+        node = self._dock_to_node.get(dock)
+        if isinstance(node, _TabNode):
+            return [candidate for candidate in node.docks if candidate is not dock]
+        return []
+
     def drop_target_at_global_pos(
         self, global_pos
     ) -> tuple[LDockWidget, QRect, bool] | None:

@@ -312,6 +312,21 @@ def test_content_color_parity(qapp):
     )
 
 
+def test_floating_title_bar_geometry_survives_float(qapp):
+    """Floating an LDockWidget keeps the custom title bar visible with nonzero geometry."""
+    lmw, ldock = _make_l_window()
+    lmw.resize(300, 200)
+    lmw.show()
+    ldock.setFloating(True)
+    qapp.processEvents()
+
+    assert ldock._title_bar.isVisible()
+    assert ldock._title_bar.height() > 0
+    assert ldock._title_bar.width() > 0
+    assert not ldock.grab().isNull()
+    ldock.hide()
+
+
 # ------------------------------------------------------------------
 # WA_StyledBackground required: control test
 # ------------------------------------------------------------------

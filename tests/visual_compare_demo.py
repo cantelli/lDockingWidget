@@ -40,10 +40,17 @@ Bottom = Qt.DockWidgetArea.BottomDockWidgetArea
 LAYOUTS: dict[str, list[tuple[str, Qt.DockWidgetArea]]] = {
     "Single Left": [("Inspector", Left)],
     "Tabbed Left": [("Inspector", Left), ("Assets", Left)],
+    "Grouped Tabs": [("Inspector", Left), ("Assets", Left), ("Outline", Left)],
     "Balanced": [
         ("Inspector", Left),
         ("Assets", Left),
         ("Layers", Right),
+        ("Console", Bottom),
+    ],
+    "Nested Split": [
+        ("Inspector", Left),
+        ("Assets", Left),
+        ("Layers", Left),
         ("Console", Bottom),
     ],
     "Full Frame": [
@@ -146,6 +153,9 @@ class DockSceneMixin:
     def _float_dock(self, dock) -> None:
         raise NotImplementedError
 
+    def _post_layout(self, layout_name: str) -> None:
+        pass
+
     def apply_layout(self, layout_name: str) -> None:
         self._layout_name = layout_name
         self._clear_docks()
@@ -154,6 +164,7 @@ class DockSceneMixin:
             dock = self._create_dock(title)
             self._add_dock(area, dock)
             self.docks.append(dock)
+        self._post_layout(layout_name)
 
     def float_first(self) -> None:
         if self.docks:
@@ -186,6 +197,7 @@ class QtComparisonPane(QFrame, DockSceneMixin):
             self.window.removeDockWidget(dock)
             dock.setParent(None)
             dock.deleteLater()
+        self.window.setDockOptions(QMainWindow.DockOption.AnimatedDocks | QMainWindow.DockOption.AllowTabbedDocks)
 
     def _create_dock(self, title: str) -> QDockWidget:
         dock = QDockWidget(title, self.window)
@@ -197,6 +209,14 @@ class QtComparisonPane(QFrame, DockSceneMixin):
 
     def _float_dock(self, dock: QDockWidget) -> None:
         dock.setFloating(True)
+
+    def _post_layout(self, layout_name: str) -> None:
+        if layout_name == "Nested Split" and len(self.docks) >= 3:
+            self.window.tabifyDockWidget(self.docks[0], self.docks[1])
+            self.window.splitDockWidget(self.docks[0], self.docks[2], Qt.Orientation.Vertical)
+        elif layout_name == "Grouped Tabs" and len(self.docks) >= 3:
+            self.window.tabifyDockWidget(self.docks[0], self.docks[1])
+            self.window.tabifyDockWidget(self.docks[0], self.docks[2])
 
 
 class LDockingComparisonPane(QFrame, DockSceneMixin):
@@ -227,6 +247,7 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
             self.window.removeDockWidget(dock)
             dock.setParent(None)
             dock.deleteLater()
+        self.window.setDockOptions(LMainWindow.AnimatedDocks | LMainWindow.AllowTabbedDocks)
 
     def _create_dock(self, title: str) -> LDockWidget:
         dock = LDockWidget(title)
@@ -238,6 +259,21 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
 
     def _float_dock(self, dock: LDockWidget) -> None:
         dock.setFloating(True)
+
+    def _post_layout(self, layout_name: str) -> None:
+        if layout_name == "Nested Split" and len(self.docks) >= 3:
+            self.window.setDockOptions(self.window.dockOptions() | LMainWindow.AllowNestedDocks)
+            self.window._drop_docks(
+                Left,
+                [self.docks[2]],
+                mode="side",
+                target_id=self.docks[0].objectName() or self.docks[0].windowTitle(),
+                side=Bottom,
+            )
+        elif layout_name == "Grouped Tabs" and len(self.docks) >= 3:
+            self.window.setDockOptions(
+                self.window.dockOptions() | LMainWindow.ForceTabbedDocks | LMainWindow.GroupedDragging
+            )
 
 
 class VisualCompareDemo(QWidget):
@@ -285,7 +321,7 @@ class VisualCompareDemo(QWidget):
 
         note = QLabel(
             "Both panes use the same content and Fusion styling. Focus on title bar height, "
-            "tab treatment, padding, splitter geometry, and floating appearance."
+            "tab treatment, padding, splitter geometry, floating appearance, and the nested/grouped presets."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color:#475569; padding: 0 2px 4px 2px;")

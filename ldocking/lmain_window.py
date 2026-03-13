@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import (
+    QApplication,
+    QDockWidget,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMenu,
     QMenuBar,
@@ -368,6 +371,7 @@ class LMainWindow(QWidget):
         return node
 
     def _sync_content_tree_to_areas(self) -> None:
+        native_area_states: dict[Qt.DockWidgetArea, object | None] = {}
         for area in (
             LeftDockWidgetArea,
             RightDockWidgetArea,
@@ -421,6 +425,127 @@ class LMainWindow(QWidget):
         ):
             self._project_area_from_leaf(area)
         self._sync_dock_map()
+
+    def _dock_lookup(self) -> dict[str, LDockWidget]:
+        return {
+            ident: dock
+            for dock in self._all_known_docks()
+            if (ident := self._dock_id(dock)) is not None
+        }
+
+    def _apply_current_tab_ids(
+        self,
+        current_tabs: dict[str, str] | None,
+        lookup: dict[str, LDockWidget] | None = None,
+    ) -> None:
+        if not current_tabs:
+            return
+        dock_lookup = lookup or self._dock_lookup()
+        for area_value, dock_id in current_tabs.items():
+            dock = dock_lookup.get(dock_id)
+            if dock is None:
+                continue
+            area = Qt.DockWidgetArea(int(area_value))
+            area_obj = self._dock_areas.get(area)
+            if area_obj is not None:
+                area_obj.set_current_tab_dock(dock)
+
+    def _apply_area_state_updates(
+        self,
+        updates: dict[Qt.DockWidgetArea, object | None],
+        current_tabs: dict[str, str] | None = None,
+    ) -> None:
+        for area, state in updates.items():
+            self._set_area_state(area, state)
+        self._project_areas_from_content_tree()
+        self._apply_current_tab_ids(current_tabs)
+
+    def _restore_projected_area_states(
+        self,
+        states: dict[Qt.DockWidgetArea, object | None],
+        lookup: dict[str, LDockWidget],
+        current_tabs: dict[str, str] | None = None,
+    ) -> None:
+        for area, state in states.items():
+            self._set_area_state(area, state)
+        self._restore_area_states(states, lookup)
+        self._sync_content_tree_to_areas()
+        self._apply_current_tab_ids(current_tabs, lookup)
+
+    def _empty_dock_restore_state(
+        self, lookup: dict[str, LDockWidget]
+    ) -> None:
+        self._pending_dock_restore = {}
+        for area_obj in self._dock_areas.values():
+            area_obj.restore_state(None, lookup)
+        self._dock_map.clear()
+
+    def _restore_docked_layout_from_content_tree(
+        self,
+        content_tree: object,
+        lookup: dict[str, LDockWidget],
+    ) -> None:
+        self._content_tree = self._restore_content_tree(content_tree)
+        embedded_area_states = self._content_tree_area_states(content_tree)
+        self._restore_projected_area_states(
+            {
+                area: embedded_area_states.get(area)
+                for area in (
+                    LeftDockWidgetArea,
+                    RightDockWidgetArea,
+                    TopDockWidgetArea,
+                    BottomDockWidgetArea,
+                )
+            },
+            lookup,
+        )
+
+    def _restore_docked_layout_from_area_trees(
+        self,
+        area_trees: dict[object, object],
+        lookup: dict[str, LDockWidget],
+    ) -> None:
+        # Legacy compatibility: older ldocking states stored per-area trees only.
+        states: dict[Qt.DockWidgetArea, object | None] = {
+            Qt.DockWidgetArea(int(area_value)): tree
+            for area_value, tree in area_trees.items()
+        }
+        self._restore_projected_area_states(
+            {
+                area: states.get(area)
+                for area in (
+                    LeftDockWidgetArea,
+                    RightDockWidgetArea,
+                    TopDockWidgetArea,
+                    BottomDockWidgetArea,
+                )
+            },
+            lookup,
+        )
+
+    def _restore_docked_layout_from_flat_entries(
+        self,
+        entries: list[dict[str, object]],
+        lookup: dict[str, LDockWidget],
+    ) -> None:
+        # Oldest compatibility branch: restore from flat dock entries only.
+        self._content_tree = _WidgetLeaf(self._central_placeholder, "central")
+        area_saved: dict[Qt.DockWidgetArea, list[tuple[LDockWidget, int]]] = {}
+        for entry in entries:
+            if entry.get("floating"):
+                continue
+            dock = lookup.get(entry["id"])
+            if dock is None:
+                continue
+            area = Qt.DockWidgetArea(entry["area"])
+            area_saved.setdefault(area, []).append((dock, entry.get("tab_index", 0)))
+        for area, pairs in area_saved.items():
+            for dock, _ in pairs:
+                self.addDockWidget(area, dock)
+            area_obj = self._dock_areas[area]
+            for dock, idx in pairs:
+                area_obj._insertion_order[dock] = idx
+        self._sync_content_tree_to_areas()
 
     def _dock_id(self, dock: LDockWidget) -> str | None:
         return dock.objectName() or dock.windowTitle() or None
@@ -570,6 +695,77 @@ class LMainWindow(QWidget):
         if payload.get("type") == "dock":
             return [deepcopy(payload)]
         return [{"type": "dock", "id": dock_id} for dock_id in self._state_collect_ids(payload)]
+
+    def _state_first_dock_id(self, node: object | None) -> str | None:
+        ids = self._state_collect_ids(node)
+        return ids[0] if ids else None
+
+    def _split_child_side(
+        self,
+        orientation: int,
+        child_index: int,
+        sibling_index: int,
+    ) -> Qt.DockWidgetArea:
+        if orientation == int(Qt.Orientation.Horizontal.value):
+            return LeftDockWidgetArea if child_index < sibling_index else RightDockWidgetArea
+        return TopDockWidgetArea if child_index < sibling_index else BottomDockWidgetArea
+
+    def _collect_restore_hints(
+        self,
+        node: object | None,
+        hints: dict[str, dict[str, object]],
+        inherited: dict[str, object] | None = None,
+    ) -> None:
+        if not isinstance(node, dict):
+            return
+        node_type = node.get("type")
+        if node_type == "dock":
+            dock_id = node.get("id")
+            if dock_id:
+                hints.setdefault(dock_id, {})
+                if inherited is not None:
+                    hints[dock_id].update(deepcopy(inherited))
+            return
+        if node_type == "tabs":
+            children = [child for child in node.get("children", []) if isinstance(child, dict)]
+            if len(children) == 1:
+                self._collect_restore_hints(children[0], hints, inherited)
+                return
+            child_ids = [child.get("id") for child in children if child.get("id")]
+            for child in children:
+                dock_id = child.get("id")
+                if not dock_id:
+                    continue
+                target_id = next((other for other in child_ids if other != dock_id), None)
+                self._collect_restore_hints(
+                    child,
+                    hints,
+                    {"restore_mode": "tab", "restore_target_id": target_id}
+                    if target_id is not None
+                    else inherited,
+                )
+            return
+        if node_type == "split":
+            children = [child for child in node.get("children", []) if isinstance(child, dict)]
+            orientation = int(node.get("orientation", int(Qt.Orientation.Horizontal.value)))
+            for index, child in enumerate(children):
+                sibling_index = index - 1 if index > 0 else (1 if len(children) > 1 else -1)
+                child_inherited = inherited
+                if sibling_index >= 0:
+                    target_id = self._state_first_dock_id(children[sibling_index])
+                    if target_id is not None:
+                        child_inherited = {
+                            "restore_mode": "side",
+                            "restore_target_id": target_id,
+                            "restore_side": int(
+                                self._split_child_side(
+                                    orientation,
+                                    index,
+                                    sibling_index,
+                                ).value
+                            ),
+                        }
+                self._collect_restore_hints(child, hints, child_inherited)
 
     def _state_tabify(
         self,
@@ -776,7 +972,7 @@ class LMainWindow(QWidget):
 
     def _restore_area_states(
         self,
-        states: dict[Qt.DockWidgetArea, object],
+        states: dict[Qt.DockWidgetArea, object | None],
         lookup: dict[str, LDockWidget],
     ) -> None:
         for area in (
@@ -832,6 +1028,9 @@ class LMainWindow(QWidget):
             return
         self._corner_owners[corner] = area
         self._apply_corner_ownership()
+
+    def corner(self, corner: Qt.Corner) -> Qt.DockWidgetArea:
+        return self._corner_owners.get(corner, TopDockWidgetArea)
 
     def setCentralWidget(self, widget: QWidget) -> None:
         if self._central_widget is not None:
@@ -894,16 +1093,14 @@ class LMainWindow(QWidget):
         if dock_id is None:
             return
         old_area = self._area_for_dock(dock)
+        area_updates: dict[Qt.DockWidgetArea, object | None] = {}
         if old_area != Qt.DockWidgetArea.NoDockWidgetArea:
-            self._set_area_state(
-                old_area,
-                self._state_remove_ids(self._area_state(old_area), {dock_id}),
-            )
+            area_updates[old_area] = self._state_remove_ids(self._area_state(old_area), {dock_id})
 
         self._dock_map[dock] = resolved_area
         payload = {"type": "dock", "id": dock_id}
-        self._set_area_state(resolved_area, self._state_add(resolved_area, payload, pos))
-        self._project_areas_from_content_tree()
+        area_updates[resolved_area] = self._state_add(resolved_area, payload, pos)
+        self._apply_area_state_updates(area_updates)
         dock.setWindowFlags(Qt.WindowType.Widget)
         dock.dockLocationChanged.emit(resolved_area)
         dock._title_bar.set_float_button_icon(False)
@@ -916,8 +1113,9 @@ class LMainWindow(QWidget):
         if dock_id is None:
             return
         self._dock_map.pop(dock, None)
-        self._set_area_state(area, self._state_remove_ids(self._area_state(area), {dock_id}))
-        self._project_areas_from_content_tree()
+        self._apply_area_state_updates({
+            area: self._state_remove_ids(self._area_state(area), {dock_id})
+        })
 
     def dockWidgetArea(self, dock: LDockWidget) -> Qt.DockWidgetArea:
         return self._area_for_dock(dock)
@@ -940,7 +1138,30 @@ class LMainWindow(QWidget):
         dock._pre_float_area_side = resolved_area
         dock._pre_float_position = int(entry.get("tab_index", 0))
         dock._floating = True
-        self.addDockWidget(resolved_area, dock)
+        mode = entry.get("restore_mode")
+        target_id = entry.get("restore_target_id")
+        side = None
+        if entry.get("restore_side") is not None:
+            try:
+                side = Qt.DockWidgetArea(int(entry["restore_side"]))
+            except (TypeError, ValueError):
+                side = None
+        target_available = (
+            isinstance(target_id, str)
+            and self._state_contains_id(self._area_state(resolved_area), target_id)
+        )
+        if mode in {"tab", "side"} and target_available:
+            self._drop_docks(
+                resolved_area,
+                [dock],
+                mode=mode,
+                target_id=target_id,
+                side=side,
+            )
+        else:
+            self.addDockWidget(resolved_area, dock)
+        if entry.get("selected") and not entry.get("floating"):
+            self._apply_current_tab_ids({str(int(resolved_area.value)): ident}, {ident: dock})
         if entry.get("floating"):
             geometry = entry.get("geometry")
             dock.setFloating(True)
@@ -959,17 +1180,14 @@ class LMainWindow(QWidget):
         if first_id is None or second_id is None:
             return
         old_area = self._area_for_dock(second)
+        area_updates: dict[Qt.DockWidgetArea, object | None] = {}
         if old_area != Qt.DockWidgetArea.NoDockWidgetArea:
-            self._set_area_state(
-                old_area,
-                self._state_remove_ids(self._area_state(old_area), {second_id}),
-            )
+            area_updates[old_area] = self._state_remove_ids(self._area_state(old_area), {second_id})
         self._dock_map[second] = area
-        self._set_area_state(
-            area,
-            self._state_tabify(self._area_state(area), first_id, {"type": "dock", "id": second_id}),
+        area_updates[area] = self._state_tabify(
+            self._area_state(area), first_id, {"type": "dock", "id": second_id}
         )
-        self._project_areas_from_content_tree()
+        self._apply_area_state_updates(area_updates)
         second._main_window = self
         second._floating = False
         second.setWindowFlags(Qt.WindowType.Widget)
@@ -980,7 +1198,7 @@ class LMainWindow(QWidget):
         area = self._area_for_dock(dock)
         if area == Qt.DockWidgetArea.NoDockWidgetArea:
             return []
-        return [d for d in self._dock_areas[area].all_docks() if d is not dock]
+        return self._dock_areas[area].tabified_docks(dock)
 
     def resizeDocks(
         self,
@@ -1469,6 +1687,7 @@ class LMainWindow(QWidget):
             payload_state = self._payload_state_for_docks(
                 resolved_area, docks
             ) or {"type": "dock", "id": self._dock_id(docks[0])}
+        area_updates: dict[Qt.DockWidgetArea, object | None] = {}
         for dock in docks:
             dock._main_window = self
             dock._floating = False
@@ -1480,10 +1699,7 @@ class LMainWindow(QWidget):
                     for dock_id in (self._dock_id(payload_dock) for payload_dock in source_areas.get(old_area, [dock]))
                     if dock_id
                 }
-                self._set_area_state(
-                    old_area,
-                    self._state_remove_ids(self._area_state(old_area), dock_ids),
-                )
+                area_updates[old_area] = self._state_remove_ids(self._area_state(old_area), dock_ids)
             self._dock_map[dock] = resolved_area
         target_id = target_id or (self._dock_id(target_dock) if target_dock is not None else None)
         allow_nested = self._allow_nested_docks()
@@ -1504,8 +1720,8 @@ class LMainWindow(QWidget):
             )
         else:
             new_state = self._state_add(resolved_area, payload_state)
-        self._set_area_state(resolved_area, new_state)
-        self._project_areas_from_content_tree()
+        area_updates[resolved_area] = new_state
+        self._apply_area_state_updates(area_updates)
         for dock in docks:
             dock.setWindowFlags(Qt.WindowType.Widget)
             dock.dockLocationChanged.emit(resolved_area)
@@ -1526,9 +1742,364 @@ class LMainWindow(QWidget):
                 return area
         return None
 
+    def _all_known_docks(self) -> list[LDockWidget]:
+        seen: set[LDockWidget] = set()
+        result: list[LDockWidget] = []
+        for area_obj in self._dock_areas.values():
+            for dock in area_obj.all_docks():
+                if dock not in seen:
+                    seen.add(dock)
+                    result.append(dock)
+        for dock in self._dock_map:
+            if dock not in seen:
+                seen.add(dock)
+                result.append(dock)
+        return result
+
+    def _extract_native_probe_dock_state(
+        self,
+        probe: QMainWindow,
+        probe_docks: dict[str, QDockWidget],
+    ) -> tuple[dict[Qt.DockWidgetArea, object | None], dict[str, str]]:
+        current_tabs: dict[str, str] = {}
+        native_area_states: dict[Qt.DockWidgetArea, object | None] = {}
+        for area in (
+            LeftDockWidgetArea,
+            RightDockWidgetArea,
+            TopDockWidgetArea,
+            BottomDockWidgetArea,
+        ):
+            area_ids = [
+                ident
+                for ident, probe_dock in probe_docks.items()
+                if probe.dockWidgetArea(probe_dock) == area and not probe_dock.isFloating()
+            ]
+            groups: list[list[str]] = []
+            seen_ids: set[str] = set()
+            for ident in area_ids:
+                if ident in seen_ids:
+                    continue
+                peers = {
+                    peer.objectName() or peer.windowTitle()
+                    for peer in probe.tabifiedDockWidgets(probe_docks[ident])
+                }
+                group = [dock_id for dock_id in area_ids if dock_id == ident or dock_id in peers]
+                for dock_id in group:
+                    seen_ids.add(dock_id)
+                groups.append(group)
+
+            area_state: object | None = None
+            for group in groups:
+                if not group:
+                    continue
+                visible_id = next(
+                    (dock_id for dock_id in group if probe_docks[dock_id].isVisible()),
+                    group[0],
+                )
+                group_state: object
+                if len(group) == 1:
+                    group_state = {"type": "dock", "id": group[0]}
+                else:
+                    group_state = {
+                        "type": "tabs",
+                        "current_index": group.index(visible_id),
+                        "children": [{"type": "dock", "id": dock_id} for dock_id in group],
+                    }
+                    current_tabs[str(area.value)] = visible_id
+                if area_state is None:
+                    area_state = group_state
+                else:
+                    # Qt can represent richer same-area splitter shapes than ldocking.
+                    # Import flattens multiple non-tab groups into the current side-area model.
+                    orientation = (
+                        int(Qt.Orientation.Vertical.value)
+                        if area in (LeftDockWidgetArea, RightDockWidgetArea)
+                        else int(Qt.Orientation.Horizontal.value)
+                    )
+                    area_state = {
+                        "type": "split",
+                        "orientation": orientation,
+                        "sizes": [],
+                        "children": [area_state, group_state],
+                    }
+            native_area_states[area] = area_state
+        return native_area_states, current_tabs
+
+    def _extract_native_probe_toolbar_state(
+        self,
+        probe: QMainWindow,
+        probe_toolbars: dict[str, QToolBar],
+    ) -> dict[str, object]:
+        toolbar_entries: list[dict[str, int | str]] = []
+        by_area: dict[Qt.ToolBarArea, list[QToolBar]] = {area: [] for area in self._toolbar_areas()}
+        for toolbar in self._tool_bars:
+            ident = self._toolbar_id(toolbar)
+            if ident is None or ident not in probe_toolbars:
+                continue
+            probe_toolbar = probe_toolbars[ident]
+            area = probe.toolBarArea(probe_toolbar)
+            by_area.setdefault(area, []).append(toolbar)
+
+        for area in self._toolbar_areas():
+            row_index = 0
+            index = 0
+            for toolbar in by_area.get(area, []):
+                ident = self._toolbar_id(toolbar)
+                if ident is None:
+                    continue
+                if index > 0 and probe.toolBarBreak(probe_toolbars[ident]):
+                    row_index += 1
+                    index = 0
+                toolbar_entries.append(
+                    {
+                        "id": ident,
+                        "area": int(area.value),
+                        "row": row_index,
+                        "index": index,
+                    }
+                )
+                index += 1
+
+        corners = {
+            str(corner.value): int(probe.corner(corner).value)
+            for corner in (
+                Qt.Corner.TopLeftCorner,
+                Qt.Corner.TopRightCorner,
+                Qt.Corner.BottomLeftCorner,
+                Qt.Corner.BottomRightCorner,
+            )
+        }
+        return {"toolbars": toolbar_entries, "corners": corners}
+
+    def _create_native_probe_docks(self) -> dict[str, QDockWidget]:
+        probe_docks: dict[str, QDockWidget] = {}
+        for ident in self._dock_lookup():
+            dock = QDockWidget(ident)
+            dock.setObjectName(ident)
+            dock.setWidget(QLabel(ident))
+            probe_docks[ident] = dock
+        return probe_docks
+
+    def _create_native_probe_toolbars(self) -> dict[str, QToolBar]:
+        probe_toolbars: dict[str, QToolBar] = {}
+        for toolbar in self._tool_bars:
+            ident = self._toolbar_id(toolbar)
+            if ident is None:
+                continue
+            probe_toolbar = QToolBar(ident)
+            probe_toolbar.setObjectName(ident)
+            probe_toolbar.addAction(ident)
+            probe_toolbars[ident] = probe_toolbar
+        return probe_toolbars
+
+    def _materialize_native_probe_state(
+        self,
+        probe: QMainWindow,
+        node: object | None,
+        area: Qt.DockWidgetArea,
+        probe_docks: dict[str, QDockWidget],
+        anchor_id: str | None = None,
+        orientation: Qt.Orientation | None = None,
+    ) -> str | None:
+        if not isinstance(node, dict):
+            return None
+        node_type = node.get("type")
+        if node_type == "dock":
+            dock_id = node.get("id")
+            if not dock_id or dock_id not in probe_docks:
+                return None
+            dock = probe_docks[dock_id]
+            if anchor_id is None:
+                probe.addDockWidget(area, dock)
+            else:
+                probe.addDockWidget(area, dock)
+                probe.splitDockWidget(probe_docks[anchor_id], dock, orientation or Qt.Orientation.Horizontal)
+            return dock_id
+        if node_type == "tabs":
+            children = [child for child in node.get("children", []) if isinstance(child, dict)]
+            if not children:
+                return None
+            representative = self._materialize_native_probe_state(
+                probe, children[0], area, probe_docks, anchor_id, orientation
+            )
+            if representative is None:
+                return None
+            for child in children[1:]:
+                dock_id = child.get("id")
+                if not dock_id or dock_id not in probe_docks:
+                    continue
+                dock = probe_docks[dock_id]
+                probe.addDockWidget(area, dock)
+                probe.tabifyDockWidget(probe_docks[representative], dock)
+            current_index = min(int(node.get("current_index", 0)), len(children) - 1)
+            current_id = children[current_index].get("id")
+            if current_id in probe_docks:
+                probe_docks[current_id].raise_()
+                probe_docks[current_id].show()
+            return representative
+        if node_type == "split":
+            children = [child for child in node.get("children", []) if isinstance(child, dict)]
+            if not children:
+                return None
+            split_orientation = Qt.Orientation(int(node.get("orientation", int(Qt.Orientation.Horizontal.value))))
+            representative = self._materialize_native_probe_state(
+                probe, children[0], area, probe_docks, anchor_id, orientation
+            )
+            previous_anchor = representative
+            for child in children[1:]:
+                previous_anchor = self._materialize_native_probe_state(
+                    probe, child, area, probe_docks, previous_anchor, split_orientation
+                ) or previous_anchor
+            return representative
+        return None
+
+    def _apply_native_probe_toolbar_layout(
+        self,
+        probe: QMainWindow,
+        probe_toolbars: dict[str, QToolBar],
+    ) -> None:
+        for corner, area in self._corner_owners.items():
+            probe.setCorner(corner, area)
+        for area in self._toolbar_areas():
+            for row_index, row in enumerate(self._toolbar_rows[area]):
+                for index, toolbar in enumerate(row):
+                    ident = self._toolbar_id(toolbar)
+                    if ident is None or ident not in probe_toolbars:
+                        continue
+                    probe_toolbar = probe_toolbars[ident]
+                    probe.addToolBar(area, probe_toolbar)
+                    if row_index > 0 and index == 0:
+                        probe.insertToolBarBreak(probe_toolbar)
+
+    def saveQtState(self, version: int = 0) -> QByteArray:
+        probe = QMainWindow()
+        probe.setCentralWidget(QWidget())
+        probe.resize(self.width() or 800, self.height() or 600)
+
+        probe_docks = self._create_native_probe_docks()
+        probe_toolbars = self._create_native_probe_toolbars()
+
+        for area in (
+            LeftDockWidgetArea,
+            RightDockWidgetArea,
+            TopDockWidgetArea,
+            BottomDockWidgetArea,
+        ):
+            self._materialize_native_probe_state(
+                probe,
+                self._area_state(area),
+                area,
+                probe_docks,
+            )
+
+        for dock, area in self._dock_map.items():
+            ident = self._dock_id(dock)
+            if ident is None or ident not in probe_docks or not dock._floating:
+                continue
+            probe_dock = probe_docks[ident]
+            probe.addDockWidget(area, probe_dock)
+            probe_dock.setFloating(True)
+            geometry = dock.geometry()
+            probe_dock.setGeometry(
+                geometry.x(),
+                geometry.y(),
+                geometry.width(),
+                geometry.height(),
+            )
+
+        self._apply_native_probe_toolbar_layout(probe, probe_toolbars)
+        probe.show()
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+        state = probe.saveState(version)
+        probe.hide()
+        probe.deleteLater()
+        return state
+
+    def _restore_native_qt_state(self, state: QByteArray, version: int = 0) -> bool:
+        docks = self._all_known_docks()
+        dock_lookup = {
+            ident: dock
+            for dock in docks
+            if (ident := self._dock_id(dock)) is not None
+        }
+        toolbar_lookup = {
+            ident: toolbar
+            for toolbar in self._tool_bars
+            if (ident := self._toolbar_id(toolbar)) is not None
+        }
+
+        probe = QMainWindow()
+        probe.setCentralWidget(QWidget())
+
+        probe_docks: dict[str, QDockWidget] = {}
+        for ident in dock_lookup:
+            dock = QDockWidget(ident)
+            dock.setObjectName(ident)
+            dock.setWidget(QLabel(ident))
+            probe.addDockWidget(LeftDockWidgetArea, dock)
+            probe_docks[ident] = dock
+
+        probe_toolbars: dict[str, QToolBar] = {}
+        for ident in toolbar_lookup:
+            toolbar = QToolBar(ident)
+            toolbar.setObjectName(ident)
+            toolbar.addAction(ident)
+            probe.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+            probe_toolbars[ident] = toolbar
+
+        if not probe.restoreState(state, version):
+            probe.deleteLater()
+            return False
+        probe.show()
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
+        for area_obj in self._dock_areas.values():
+            area_obj.restore_state(None, dock_lookup)
+        self._dock_map.clear()
+        self._pending_dock_restore = {}
+
+        native_area_states, current_tabs = self._extract_native_probe_dock_state(
+            probe, probe_docks
+        )
+        self._restore_projected_area_states(native_area_states, dock_lookup, current_tabs)
+
+        for ident, dock in dock_lookup.items():
+            probe_dock = probe_docks[ident]
+            if probe_dock.isFloating():
+                dock._pre_float_area_side = probe.dockWidgetArea(probe_dock)
+                dock._pre_float_position = 0
+                dock.setParent(None)
+                dock.setWindowFlags(
+                    Qt.WindowType.Tool
+                    | Qt.WindowType.FramelessWindowHint
+                    | Qt.WindowType.WindowStaysOnTopHint
+                )
+                dock._floating = True
+                dock._title_bar.set_float_button_icon(True)
+                geometry = probe_dock.geometry()
+                dock.setGeometry(
+                    geometry.x(),
+                    geometry.y(),
+                    geometry.width(),
+                    geometry.height(),
+                )
+                dock.show()
+
+        self._restore_toolbar_state(
+            self._extract_native_probe_toolbar_state(probe, probe_toolbars)
+        )
+        probe.hide()
+        probe.deleteLater()
+        return True
+
     def saveState(self, version: int = 0) -> QByteArray:
         docks_state = []
         self._sync_dock_map()
+        restore_hints: dict[str, dict[str, object]] = {}
         for area in (
             LeftDockWidgetArea,
             RightDockWidgetArea,
@@ -1536,6 +2107,7 @@ class LMainWindow(QWidget):
             BottomDockWidgetArea,
         ):
             self._update_area_leaf_state(area)
+            self._collect_restore_hints(self._area_state(area), restore_hints)
         for dock, area in self._dock_map.items():
             ident = dock.objectName() or dock.windowTitle()
             if not ident:
@@ -1551,6 +2123,7 @@ class LMainWindow(QWidget):
             if dock._floating:
                 g = dock.geometry()
                 entry["geometry"] = [g.x(), g.y(), g.width(), g.height()]
+            entry.update(restore_hints.get(ident, {}))
             docks_state.append(entry)
 
         current_tabs: dict[str, str] = {}
@@ -1560,6 +2133,8 @@ class LMainWindow(QWidget):
                 ident = current_dock.objectName() or current_dock.windowTitle()
                 if ident:
                     current_tabs[str(area.value)] = ident
+        for entry in docks_state:
+            entry["selected"] = current_tabs.get(str(entry["area"])) == entry["id"]
 
         payload = {
             "format_version": _STATE_FORMAT_VERSION,
@@ -1569,10 +2144,6 @@ class LMainWindow(QWidget):
             "content_tree": self._export_content_tree(self._content_tree),
             "docks": docks_state,
             "current_tabs": current_tabs,
-            "area_trees": {
-                str(area.value): area_obj.export_state()
-                for area, area_obj in self._dock_areas.items()
-            },
         }
         payload.update(self._export_toolbar_state())
         return QByteArray(json.dumps(payload).encode())
@@ -1588,53 +2159,20 @@ class LMainWindow(QWidget):
             if data.get("state_version", 0) != version:
                 return False
 
-            lookup: dict[str, LDockWidget] = {}
-            for dock in list(self._dock_map):
-                ident = dock.objectName() or dock.windowTitle()
-                if ident:
-                    lookup[ident] = dock
-            self._pending_dock_restore = {}
-
-            for area_obj in self._dock_areas.values():
-                area_obj.restore_state(None, lookup)
-            self._dock_map.clear()
+            lookup = self._dock_lookup()
+            self._empty_dock_restore_state(lookup)
 
             entries = sorted(data.get("docks", []), key=lambda e: e.get("tab_index", 0))
             content_tree = data.get("content_tree")
-            embedded_area_states: dict[Qt.DockWidgetArea, object] = {}
             if content_tree is not None:
-                self._content_tree = self._restore_content_tree(content_tree)
-                embedded_area_states = self._content_tree_area_states(content_tree)
+                self._restore_docked_layout_from_content_tree(content_tree, lookup)
             else:
                 self._content_tree = _WidgetLeaf(self._central_placeholder, "central")
-
-            if embedded_area_states:
-                self._restore_area_states(embedded_area_states, lookup)
-            else:
                 area_trees = data.get("area_trees")
                 if isinstance(area_trees, dict):
-                    states = {
-                        Qt.DockWidgetArea(int(area_value)): tree
-                        for area_value, tree in area_trees.items()
-                    }
-                    self._restore_area_states(states, lookup)
+                    self._restore_docked_layout_from_area_trees(area_trees, lookup)
                 else:
-                    area_saved: dict[Qt.DockWidgetArea, list[tuple[LDockWidget, int]]] = {}
-                    for entry in entries:
-                        if entry.get("floating"):
-                            continue
-                        dock = lookup.get(entry["id"])
-                        if dock is None:
-                            continue
-                        area = Qt.DockWidgetArea(entry["area"])
-                        area_saved.setdefault(area, []).append((dock, entry.get("tab_index", 0)))
-                    for area, pairs in area_saved.items():
-                        for dock, _ in pairs:
-                            self.addDockWidget(area, dock)
-                        area_obj = self._dock_areas[area]
-                        for dock, idx in pairs:
-                            area_obj._insertion_order[dock] = idx
-            self._sync_content_tree_to_areas()
+                    self._restore_docked_layout_from_flat_entries(entries, lookup)
 
             for entry in entries:
                 dock = lookup.get(entry["id"])
@@ -1659,13 +2197,7 @@ class LMainWindow(QWidget):
                     dock.setGeometry(g[0], g[1], g[2], g[3])
                 dock.show()
 
-            for area_value, dock_id in data.get("current_tabs", {}).items():
-                dock = lookup.get(dock_id)
-                if dock is not None:
-                    area = Qt.DockWidgetArea(int(area_value))
-                    area_obj = self._dock_areas.get(area)
-                    if area_obj is not None:
-                        area_obj.set_current_tab_dock(dock)
+            self._apply_current_tab_ids(data.get("current_tabs", {}), lookup)
 
             outer = data.get("outer_splitter")
             if outer and self._outer_splitter is not None:
@@ -1685,4 +2217,4 @@ class LMainWindow(QWidget):
 
             return True
         except Exception:
-            return False
+            return self._restore_native_qt_state(state, version)

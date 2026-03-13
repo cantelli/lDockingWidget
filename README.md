@@ -17,12 +17,15 @@ Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses th
 - `addDockWidget()` and drag/drop now honor `allowedAreas()`. If the requested area is disallowed, the dock falls back to the first allowed side; if no areas are allowed, the operation is ignored.
 - Floating/re-docking preserves stable tab order within a dock area.
 - `saveState()` / `restoreState()` now preserve the active tab within each tabbed dock area, plus toolbar areas/order/breaks and toolbar-corner ownership.
+- `restoreState()` accepts both `ldocking`'s JSON state blobs and native Qt `QMainWindow.saveState()` blobs for the supported subset, restoring live docks/toolbars by `objectName()` or `windowTitle()`.
+- `saveQtState()` exports a native Qt `QMainWindow.saveState()` blob for the same supported subset, while `saveState()` remains the default `ldocking` JSON format.
+- Native Qt state import only restores docks/toolbars already present in the `LMainWindow`; missing ids are skipped and are not queued for later `restoreDockWidget()`.
 - `toggleViewAction()` restores hidden docks without losing floating state, and re-selects a dock when it is shown inside a tab group.
 - Drag/drop now distinguishes side-dock targets from center tab-drop targets within visible dock areas.
 - `ForceTabbedDocks` is enforced for occupied sides: same-side additions and side drops tab into the existing group instead of creating side-by-side splits.
 - `AllowNestedDocks` enables target-local nested splits only when tab forcing is off; when disabled, targeted side drops collapse to top-level side placement.
 - `GroupedDragging` drags an entire tab group together, and grouped drops are rejected if any dock in the group disallows the target area.
-- The top-level docked layout is now persisted as a root content tree around the central widget; `area_trees` remain restore-only fallback for older saved states.
+- The top-level docked layout is now persisted as a root content tree around the central widget. `area_trees` are legacy restore-only compatibility for older saved states and are no longer written by current `saveState()` output.
 - Toolbars now support all four Qt toolbar areas plus break rows, and `setCorner()` adjusts which area visually owns each toolbar corner.
 - `saveState(version)` persists the caller-provided version number, and `restoreState(state, version)` requires the same version to succeed.
 - `restoreDockWidget()` is supported for docks that are created after `restoreState()`.
@@ -161,6 +164,7 @@ win.setStatusBar(status_bar)
 win.setCorner(corner, area)   # controls toolbar-corner ownership
 win.createPopupMenu() -> QMenu | None
 win.saveState(version=0) -> QByteArray
+win.saveQtState(version=0) -> QByteArray
 win.restoreState(state, version=0) -> bool
 ```
 
