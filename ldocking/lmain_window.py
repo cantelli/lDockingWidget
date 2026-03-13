@@ -1015,7 +1015,7 @@ class LMainWindow(QWidget):
         dock_area = self._dock_areas.get(area)
         if dock_area is not None:
             return dock_area.get_tab_position()
-        return QTabWidget.TabPosition.North
+        return QTabWidget.TabPosition.South
 
     def setCorner(self, corner: Qt.Corner, area: Qt.DockWidgetArea) -> None:
         valid_areas = {

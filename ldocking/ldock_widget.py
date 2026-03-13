@@ -48,6 +48,7 @@ _RESIZE_LEFT = 1
 _RESIZE_RIGHT = 2
 _RESIZE_TOP = 4
 _RESIZE_BOTTOM = 8
+_DEFAULT_FLOATING_SIZE = QSize(260, 180)
 
 
 class LDockWidget(QWidget):
@@ -200,11 +201,32 @@ class LDockWidget(QWidget):
     # Internal: float / dock transitions
     # ------------------------------------------------------------------
 
+    def _reset_interaction_state(self) -> None:
+        self._float_moving = False
+        self._float_drag_offset = QPoint()
+        self._resize_dir = 0
+        self._resize_start_pos = QPoint()
+        self._resize_start_geom = QRect()
+        self.unsetCursor()
+
     def _float_out(self, pos: QPoint | None = None) -> None:
         """Detach from dock area and become a floating top-level window."""
+        self._reset_interaction_state()
         # Capture geometry BEFORE detaching (mapToGlobal needs a live parent chain)
         snap_pos = self.mapToGlobal(QPoint(0, 0))
         snap_size = self.size()
+        floating_size = snap_size.expandedTo(
+            self.sizeHint().expandedTo(self.minimumSize())
+        )
+        if self._main_window is not None:
+            floating_size = floating_size.expandedTo(
+                QSize(
+                    max(_DEFAULT_FLOATING_SIZE.width(), self._main_window.width() // 3),
+                    max(_DEFAULT_FLOATING_SIZE.height(), self._main_window.height() // 3),
+                )
+            )
+        else:
+            floating_size = floating_size.expandedTo(_DEFAULT_FLOATING_SIZE)
 
         if self._current_area is not None:
             self._pre_float_position = self._current_area._insertion_order.get(
@@ -235,8 +257,8 @@ class LDockWidget(QWidget):
         else:
             self.move(snap_pos)
 
-        if snap_size.isValid() and snap_size.width() >= 80 and snap_size.height() >= 40:
-            self.resize(snap_size)
+        if floating_size.isValid() and floating_size.width() >= 80 and floating_size.height() >= 40:
+            self.resize(floating_size)
 
         self._floating = True
         self._title_bar.set_float_button_icon(True)
@@ -249,6 +271,7 @@ class LDockWidget(QWidget):
         """Re-dock into the main window (last known area, or Left)."""
         if self._main_window is None:
             return
+        self._reset_interaction_state()
         preferred_area = self._pre_float_area_side or Qt.DockWidgetArea.LeftDockWidgetArea
         area = self._main_window._resolve_dock_area(self, preferred_area)
         if area is None:
@@ -263,7 +286,6 @@ class LDockWidget(QWidget):
         self._main_window.addDockWidget(area, self)
         self.setWindowFlags(Qt.WindowType.Widget)   # clear stale floating flags
         self._title_bar.set_float_button_icon(False)
-        self.unsetCursor()
         if self._main_window is not None:
             self._main_window.raise_()
             self._main_window.activateWindow()
@@ -283,7 +305,7 @@ class LDockWidget(QWidget):
         self._title_bar.close_requested.connect(self.close)
         self._title_bar.drag_started.connect(self._on_drag_started)
         self._title_bar.move_dragging.connect(self._on_title_bar_move)
-        self._title_bar.drag_released.connect(lambda: setattr(self, '_float_moving', False))
+        self._title_bar.drag_released.connect(self._reset_interaction_state)
 
         self._outer_layout.addWidget(self._title_bar)
 
@@ -318,6 +340,8 @@ class LDockWidget(QWidget):
         if not bool(self._features & DockWidgetMovable):
             return
         if self._floating:
+            self._resize_dir = 0
+            self.unsetCursor()
             top_left = self.frameGeometry().topLeft()
             self._float_drag_offset = global_pos - top_left
             self._float_moving = True       # native window move mode
@@ -349,6 +373,8 @@ class LDockWidget(QWidget):
         super().setVisible(visible)
         if visible and self._current_area is not None:
             self._current_area.set_current_tab_dock(self)
+        if not visible:
+            self._reset_interaction_state()
         self.visibilityChanged.emit(visible)
 
     # ------------------------------------------------------------------
@@ -381,8 +407,7 @@ class LDockWidget(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:
         if self._resize_dir:
-            self._resize_dir = 0
-            self.unsetCursor()
+            self._reset_interaction_state()
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -422,7 +447,9 @@ class LDockWidget(QWidget):
     def _do_resize(self, global_pos: QPoint) -> None:
         delta = global_pos - self._resize_start_pos
         geom = QRect(self._resize_start_geom)
-        min_w, min_h = 100, 60
+        minimum = self.minimumSizeHint().expandedTo(self.minimumSize())
+        min_w = max(80, minimum.width())
+        min_h = max(40, minimum.height())
 
         if self._resize_dir & _RESIZE_LEFT:
             new_left = geom.left() + delta.x()

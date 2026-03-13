@@ -126,13 +126,13 @@ def test_main_window_dock_options(qapp):
 def test_main_window_tab_position(qapp):
     from PySide6.QtWidgets import QTabWidget
     win = LMainWindow()
-    # Default is North
-    assert win.tabPosition(LeftDockWidgetArea) == QTabWidget.TabPosition.North
+    # Default matches Qt dock-tab rendering more closely with bottom tabs.
+    assert win.tabPosition(LeftDockWidgetArea) == QTabWidget.TabPosition.South
     # setTabPosition round-trips
     win.setTabPosition(LeftDockWidgetArea, QTabWidget.TabPosition.South)
     assert win.tabPosition(LeftDockWidgetArea) == QTabWidget.TabPosition.South
-    # Unknown area returns North without raising
-    assert win.tabPosition(Qt.DockWidgetArea.NoDockWidgetArea) == QTabWidget.TabPosition.North
+    # Unknown area returns the default without raising
+    assert win.tabPosition(Qt.DockWidgetArea.NoDockWidgetArea) == QTabWidget.TabPosition.South
 
 
 def test_tabified_dock_widgets(qapp):

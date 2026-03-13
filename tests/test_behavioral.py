@@ -6,6 +6,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel
 
 from ldocking import (
@@ -175,6 +176,69 @@ def test_floating_title_drag_preserves_cursor_offset(qapp):
     move_global = start_global + QPoint(40, 30)
     dock._on_title_bar_move(move_global)
     assert dock.pos() == move_global - QPoint(17, 9)
+
+
+def test_floating_cycle_clears_transient_resize_and_drag_state(qapp):
+    """Repeated float/dock cycles clear stale drag and resize state."""
+    win = LMainWindow()
+    win.resize(800, 600)
+    dock = _dock("d")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+
+    dock.setFloating(True)
+    dock._float_moving = True
+    dock._resize_dir = 3
+    dock.setFloating(False)
+
+    assert not dock.isFloating()
+    assert dock._float_moving is False
+    assert dock._resize_dir == 0
+    assert dock._float_drag_offset == QPoint()
+
+    dock._float_moving = True
+    dock._resize_dir = 5
+    dock.setFloating(True)
+
+    assert dock.isFloating()
+    assert dock._float_moving is False
+    assert dock._resize_dir == 0
+    assert dock._float_drag_offset == QPoint()
+
+
+def test_floating_resize_respects_minimum_size(qapp):
+    """Floating border resize honors the dock's configured minimum size."""
+    win = LMainWindow()
+    dock = _dock("d")
+    dock.setMinimumSize(180, 120)
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    dock.setFloating(True)
+    qapp.processEvents()
+
+    start = dock.geometry()
+    dock._resize_dir = 1 | 4
+    dock._resize_start_pos = QPoint(0, 0)
+    dock._resize_start_geom = QRect(start)
+    dock._do_resize(QPoint(start.width(), start.height()))
+
+    assert dock.width() >= 180
+    assert dock.height() >= 120
+
+
+def test_title_bar_button_press_does_not_start_drag_tracking(qapp):
+    """Pressing the float button does not arm title-bar drag tracking."""
+    dock = _dock("d")
+    title_bar = dock._title_bar
+    dock.show()
+    qapp.processEvents()
+
+    button_center = title_bar._float_btn.rect().center()
+    QTest.mousePress(title_bar._float_btn, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, button_center)
+
+    assert title_bar._press_pos is None
+    assert title_bar._dragging is False
+
+    QTest.mouseRelease(title_bar._float_btn, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, button_center)
+    dock.hide()
 
 
 # ------------------------------------------------------------------

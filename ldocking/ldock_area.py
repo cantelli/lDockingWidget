@@ -57,7 +57,7 @@ class LDockArea(QWidget):
         self._allow_nested = False
         self._grouped_dragging = False
         self._vertical_tabs_opt = False
-        self._tab_position_opt = QTabWidget.TabPosition.North
+        self._tab_position_opt = QTabWidget.TabPosition.South
         self._insertion_order: dict[LDockWidget, int] = {}
         self._dock_to_node: dict[LDockWidget, object] = {}
         self._node_tab_areas: dict[int, LDockTabArea] = {}

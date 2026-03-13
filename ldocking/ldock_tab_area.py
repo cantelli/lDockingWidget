@@ -26,6 +26,11 @@ class LTearOffTabBar(QTabBar):
         self._press_pos: QPoint | None = None
         self._drag_tab: int = -1
         self.setMovable(True)
+        self.setExpanding(False)
+        self.setElideMode(Qt.TextElideMode.ElideRight)
+        self.setDocumentMode(False)
+        self.setDrawBase(True)
+        self.setUsesScrollButtons(True)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -138,7 +143,7 @@ class LDockTabArea(QWidget):
         self._tab_bar.setCurrentIndex(self._docks.index(dock))
 
     def set_vertical_tabs(self, vertical: bool) -> None:
-        pos = QTabWidget.TabPosition.West if vertical else QTabWidget.TabPosition.North
+        pos = QTabWidget.TabPosition.West if vertical else QTabWidget.TabPosition.South
         self.set_tab_position(pos)
 
     def set_grouped_dragging(self, grouped_dragging: bool) -> None:

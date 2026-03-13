@@ -36,6 +36,7 @@ class LTitleBar(QWidget):
         self._vertical = False
         self._press_pos: QPoint | None = None
         self._dragging = False
+        self._press_target: QWidget | None = None
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("dockTitleBar")
@@ -119,10 +120,19 @@ class LTitleBar(QWidget):
     # Events
     # ------------------------------------------------------------------
 
+    def _drag_blocked_widget(self, widget: QWidget | None) -> bool:
+        return widget in {self._float_btn, self._close_btn}
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self._press_pos = event.globalPosition().toPoint()
-            self._dragging = False
+            local_pos = event.position().toPoint()
+            self._press_target = self.childAt(local_pos)
+            if not self._drag_blocked_widget(self._press_target):
+                self._press_pos = event.globalPosition().toPoint()
+                self._dragging = False
+            else:
+                self._press_pos = None
+                self._dragging = False
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -139,12 +149,16 @@ class LTitleBar(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:
         self._press_pos = None
+        self._press_target = None
         self._dragging = False
         self.drag_released.emit()
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not self._drag_blocked_widget(self.childAt(event.position().toPoint()))
+        ):
             self.float_requested.emit()
         super().mouseDoubleClickEvent(event)
 
