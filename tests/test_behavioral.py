@@ -24,6 +24,7 @@ from ldocking import (
     NoDockWidgetFeatures,
     AllDockWidgetFeatures,
     ForceTabbedDocks,
+    AnimatedDocks,
 )
 
 
@@ -365,7 +366,7 @@ def test_drag_manager_classifies_central_edge_as_area_target(qapp):
 def test_allow_nested_docks_creates_nested_split(qapp):
     """AllowNestedDocks enables relative splits inside an occupied dock area."""
     win = LMainWindow()
-    win.setDockOptions(AllowNestedDocks | ForceTabbedDocks)
+    win.setDockOptions(AllowNestedDocks | AnimatedDocks)
     da = _dock("da")
     db = _dock("db")
     dc = _dock("dc")
@@ -377,6 +378,54 @@ def test_allow_nested_docks_creates_nested_split(qapp):
 
     assert area._split_area is not None
     assert dc in area.all_docks()
+
+
+def test_force_tabbed_docks_prevents_side_split_in_occupied_area(qapp):
+    """ForceTabbedDocks turns a same-area side drop into tabbing instead of a split."""
+    win = LMainWindow()
+    win.setDockOptions(ForceTabbedDocks | AllowNestedDocks)
+    anchor = _dock("anchor")
+    moved = _dock("moved")
+    win.addDockWidget(RightDockWidgetArea, anchor)
+
+    win._drop_docks(
+        RightDockWidgetArea,
+        [moved],
+        mode="side",
+        target_id="anchor",
+        side=BottomDockWidgetArea,
+    )
+
+    right_leaf = win._leaf_for_key("right")
+    assert right_leaf is not None
+    assert right_leaf.area_state["type"] == "tabs"
+    assert [child["id"] for child in right_leaf.area_state["children"]] == ["anchor", "moved"]
+
+
+def test_allow_nested_docks_off_collapses_side_drop_to_top_level(qapp):
+    """Without AllowNestedDocks, a targeted side drop splits the whole area rather than nesting."""
+    win = LMainWindow()
+    win.setDockOptions(AnimatedDocks)
+    anchor = _dock("anchor")
+    sibling = _dock("sibling")
+    moved = _dock("moved")
+    win.addDockWidget(RightDockWidgetArea, anchor)
+    win.addDockWidget(RightDockWidgetArea, sibling)
+
+    win._drop_docks(
+        RightDockWidgetArea,
+        [moved],
+        mode="side",
+        target_id="anchor",
+        side=BottomDockWidgetArea,
+    )
+
+    right_leaf = win._leaf_for_key("right")
+    assert right_leaf is not None
+    assert right_leaf.area_state["type"] == "split"
+    assert len(right_leaf.area_state["children"]) == 2
+    assert right_leaf.area_state["children"][0]["type"] == "split"
+    assert right_leaf.area_state["children"][1]["id"] == "moved"
 
 
 def test_grouped_dragging_uses_full_tab_payload(qapp):
@@ -391,6 +440,33 @@ def test_grouped_dragging_uses_full_tab_payload(qapp):
     payload = win._dock_areas[LeftDockWidgetArea].docks_for_group_drag(da)
 
     assert payload == [da, db]
+
+
+def test_drag_manager_targets_tab_group_bounds(qapp):
+    """Hovering a tab group's tab bar targets the whole group, not only the visible dock body."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    da = _dock("da")
+    db = _dock("db")
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+    area = win._dock_areas[LeftDockWidgetArea]
+    area.set_current_tab_dock(da)
+    win.show()
+    qapp.processEvents()
+
+    dm = LDragManager.instance()
+    dm._dock = _dock("dragging")
+    tab_bar = area._tab_area._tab_bar
+    global_pos = tab_bar.mapToGlobal(tab_bar.rect().center())
+    target = dm._classify_drop_zone(win, global_pos, win.mapFromGlobal(global_pos))
+
+    assert target is not None
+    assert target.mode == "tab"
+    assert target.target_id == "da"
+    assert target.target_rect is not None
+    assert target.target_rect.height() == area._tab_area.height()
+    win.hide()
 
 
 def test_grouped_dragging_drop_preserves_current_tab(qapp):
@@ -415,10 +491,38 @@ def test_grouped_dragging_drop_preserves_current_tab(qapp):
     assert right_area.current_tab_dock() is db
 
 
+def test_grouped_dragging_rejects_drop_when_any_dock_disallows_area(qapp):
+    """GroupedDragging rejects the whole drop if any dock in the group disallows the target area."""
+    win = LMainWindow()
+    win.setDockOptions(ForceTabbedDocks | GroupedDragging)
+    da = _dock("da")
+    db = _dock("db")
+    target = _dock("target")
+    db.setAllowedAreas(LeftDockWidgetArea)
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+    win.addDockWidget(RightDockWidgetArea, target)
+
+    payload = win._dock_areas[LeftDockWidgetArea].docks_for_group_drag(da)
+    before_left = [dock.windowTitle() for dock in win._dock_areas[LeftDockWidgetArea].all_docks()]
+    before_right = [dock.windowTitle() for dock in win._dock_areas[RightDockWidgetArea].all_docks()]
+
+    win._drop_docks(
+        RightDockWidgetArea,
+        payload,
+        mode="side",
+        target_id="target",
+        side=BottomDockWidgetArea,
+    )
+
+    assert [dock.windowTitle() for dock in win._dock_areas[LeftDockWidgetArea].all_docks()] == before_left
+    assert [dock.windowTitle() for dock in win._dock_areas[RightDockWidgetArea].all_docks()] == before_right
+
+
 def test_drop_docks_accepts_target_id_without_target_widget(qapp):
     """Tree-driven drop accepts a stable target id without a live target widget object."""
     win = LMainWindow()
-    win.setDockOptions(AllowNestedDocks | ForceTabbedDocks)
+    win.setDockOptions(AllowNestedDocks | AnimatedDocks)
     anchor = _dock("anchor")
     moved = _dock("moved")
     win.addDockWidget(RightDockWidgetArea, anchor)

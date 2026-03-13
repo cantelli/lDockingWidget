@@ -108,6 +108,7 @@ def test_main_window_dock_options(qapp):
     assert hasattr(win, "dockOptions")
     assert hasattr(win, "setCorner")
     assert hasattr(win, "tabifiedDockWidgets")
+    assert hasattr(win, "restoreDockWidget")
     assert hasattr(win, "setTabPosition")
     assert hasattr(win, "tabPosition")
 

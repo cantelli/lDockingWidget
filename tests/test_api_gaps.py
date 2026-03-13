@@ -110,20 +110,243 @@ def test_insert_toolbar(qapp):
 
 
 def test_toolbar_area_always_top(qapp):
-    """toolBarArea always returns TopToolBarArea."""
+    """Default addToolBar places toolbars in the top area."""
     win = LMainWindow()
     tb = win.addToolBar("A")
     assert win.toolBarArea(tb) == Qt.ToolBarArea.TopToolBarArea
 
 
-def test_toolbar_break_noops(qapp):
-    """toolBarBreak returns False; addToolBarBreak/etc do not raise."""
+def test_add_toolbar_bottom_area(qapp):
+    """addToolBar(area, toolbar) honors BottomToolBarArea."""
     win = LMainWindow()
-    tb = win.addToolBar("A")
-    assert win.toolBarBreak(tb) is False
+    tb = QToolBar("Bottom")
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, tb)
+    assert win.toolBarArea(tb) == Qt.ToolBarArea.BottomToolBarArea
+    assert tb in win.toolBars()
+
+
+def test_add_toolbar_left_area(qapp):
+    """addToolBar(area, toolbar) honors LeftToolBarArea."""
+    win = LMainWindow()
+    tb = QToolBar("Left")
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb)
+    assert win.toolBarArea(tb) == Qt.ToolBarArea.LeftToolBarArea
+
+
+def test_add_toolbar_right_area(qapp):
+    """addToolBar(area, toolbar) honors RightToolBarArea."""
+    win = LMainWindow()
+    tb = QToolBar("Right")
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, tb)
+    assert win.toolBarArea(tb) == Qt.ToolBarArea.RightToolBarArea
+
+
+def test_toolbar_breaks_round_trip(qapp):
+    """Toolbar break APIs create and remove row boundaries in supported areas."""
+    win = LMainWindow()
+    tb1 = win.addToolBar("A")
     win.addToolBarBreak()
-    win.removeToolBarBreak(tb)
-    win.insertToolBarBreak(tb)
+    tb2 = win.addToolBar("B")
+    assert win.toolBarBreak(tb1) is False
+    assert win.toolBarBreak(tb2) is True
+    win.removeToolBarBreak(tb2)
+    assert win.toolBarBreak(tb2) is False
+
+
+def test_insert_toolbar_break_before_toolbar(qapp):
+    """insertToolBarBreak marks the given toolbar as the start of a new row."""
+    win = LMainWindow()
+    tb1 = win.addToolBar("A")
+    tb2 = win.addToolBar("B")
+    win.insertToolBarBreak(tb2)
+    assert win.toolBarBreak(tb1) is False
+    assert win.toolBarBreak(tb2) is True
+
+
+def test_bottom_toolbar_breaks_round_trip(qapp):
+    """Toolbar breaks also work in the bottom toolbar area."""
+    win = LMainWindow()
+    tb1 = QToolBar("Bottom A")
+    tb2 = QToolBar("Bottom B")
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, tb1)
+    win.addToolBarBreak(Qt.ToolBarArea.BottomToolBarArea)
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, tb2)
+    assert win.toolBarArea(tb1) == Qt.ToolBarArea.BottomToolBarArea
+    assert win.toolBarArea(tb2) == Qt.ToolBarArea.BottomToolBarArea
+    assert win.toolBarBreak(tb1) is False
+    assert win.toolBarBreak(tb2) is True
+    win.removeToolBarBreak(tb2)
+    assert win.toolBarBreak(tb2) is False
+
+
+def test_left_toolbar_breaks_round_trip(qapp):
+    """Toolbar breaks also work in the left toolbar area."""
+    win = LMainWindow()
+    tb1 = QToolBar("Left A")
+    tb2 = QToolBar("Left B")
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb1)
+    win.addToolBarBreak(Qt.ToolBarArea.LeftToolBarArea)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb2)
+    assert win.toolBarArea(tb1) == Qt.ToolBarArea.LeftToolBarArea
+    assert win.toolBarArea(tb2) == Qt.ToolBarArea.LeftToolBarArea
+    assert win.toolBarBreak(tb1) is False
+    assert win.toolBarBreak(tb2) is True
+    win.removeToolBarBreak(tb2)
+    assert win.toolBarBreak(tb2) is False
+
+
+def test_right_toolbar_breaks_round_trip(qapp):
+    """Toolbar breaks also work in the right toolbar area."""
+    win = LMainWindow()
+    tb1 = QToolBar("Right A")
+    tb2 = QToolBar("Right B")
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, tb1)
+    win.addToolBarBreak(Qt.ToolBarArea.RightToolBarArea)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, tb2)
+    assert win.toolBarArea(tb1) == Qt.ToolBarArea.RightToolBarArea
+    assert win.toolBarArea(tb2) == Qt.ToolBarArea.RightToolBarArea
+    assert win.toolBarBreak(tb1) is False
+    assert win.toolBarBreak(tb2) is True
+    win.removeToolBarBreak(tb2)
+    assert win.toolBarBreak(tb2) is False
+
+
+def test_insert_toolbar_preserves_target_area(qapp):
+    """insertToolBar inserts into the reference toolbar's area."""
+    win = LMainWindow()
+    tb1 = QToolBar("Bottom A")
+    tb2 = QToolBar("Bottom B")
+    tb_new = QToolBar("Bottom New")
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, tb1)
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, tb2)
+    win.insertToolBar(tb2, tb_new)
+    assert win.toolBarArea(tb_new) == Qt.ToolBarArea.BottomToolBarArea
+    bars = win.toolBars()
+    assert bars.index(tb_new) < bars.index(tb2)
+
+
+def test_insert_toolbar_preserves_left_area(qapp):
+    """insertToolBar inserts into the reference toolbar's left area."""
+    win = LMainWindow()
+    tb1 = QToolBar("Left A")
+    tb2 = QToolBar("Left B")
+    tb_new = QToolBar("Left New")
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb1)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb2)
+    win.insertToolBar(tb2, tb_new)
+    assert win.toolBarArea(tb_new) == Qt.ToolBarArea.LeftToolBarArea
+    bars = win.toolBars()
+    assert bars.index(tb_new) < bars.index(tb2)
+
+
+def test_remove_toolbar_from_right_area(qapp):
+    """removeToolBar also works for toolbars placed in the right area."""
+    win = LMainWindow()
+    tb1 = QToolBar("Right A")
+    tb2 = QToolBar("Right B")
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, tb1)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, tb2)
+    win.removeToolBar(tb1)
+    assert tb1 not in win.toolBars()
+    assert tb2 in win.toolBars()
+    assert win.toolBarArea(tb2) == Qt.ToolBarArea.RightToolBarArea
+
+
+def _toolbar_anchor(win, toolbar):
+    point = toolbar.mapTo(win, toolbar.rect().topLeft())
+    return point.x(), point.y(), toolbar.width(), toolbar.height()
+
+
+def _sized_toolbar(title):
+    toolbar = QToolBar(title)
+    toolbar.addAction(title)
+    return toolbar
+
+
+def test_set_corner_top_left_prefers_left(qapp):
+    """Top-left corner ownership shifts the top toolbar away from the left side."""
+    win = LMainWindow()
+    win.resize(600, 400)
+    top = _sized_toolbar("Top")
+    left = _sized_toolbar("Left")
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    win.show()
+    qapp.processEvents()
+    before_x, _, _, _ = _toolbar_anchor(win, top)
+    win.setCorner(Qt.Corner.TopLeftCorner, LeftDockWidgetArea)
+    qapp.processEvents()
+    after_x, _, _, _ = _toolbar_anchor(win, top)
+    assert after_x > before_x
+
+
+def test_set_corner_top_right_prefers_right(qapp):
+    """Top-right corner ownership shortens the top toolbar span on the right."""
+    win = LMainWindow()
+    win.resize(600, 400)
+    top = _sized_toolbar("Top")
+    right = _sized_toolbar("Right")
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, right)
+    win.show()
+    qapp.processEvents()
+    before_x, _, before_w, _ = _toolbar_anchor(win, top)
+    win.setCorner(Qt.Corner.TopRightCorner, RightDockWidgetArea)
+    qapp.processEvents()
+    after_x, _, after_w, _ = _toolbar_anchor(win, top)
+    assert after_x == before_x
+    assert after_w < before_w
+
+
+def test_set_corner_bottom_left_prefers_left(qapp):
+    """Bottom-left corner ownership shifts the bottom toolbar away from the left side."""
+    win = LMainWindow()
+    win.resize(600, 400)
+    bottom = _sized_toolbar("Bottom")
+    left = _sized_toolbar("Left")
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, bottom)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    win.show()
+    qapp.processEvents()
+    before_x, _, _, _ = _toolbar_anchor(win, bottom)
+    win.setCorner(Qt.Corner.BottomLeftCorner, LeftDockWidgetArea)
+    qapp.processEvents()
+    after_x, _, _, _ = _toolbar_anchor(win, bottom)
+    assert after_x > before_x
+
+
+def test_set_corner_bottom_right_prefers_right(qapp):
+    """Bottom-right corner ownership shortens the bottom toolbar span on the right."""
+    win = LMainWindow()
+    win.resize(600, 400)
+    bottom = _sized_toolbar("Bottom")
+    right = _sized_toolbar("Right")
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, bottom)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, right)
+    win.show()
+    qapp.processEvents()
+    before_x, _, before_w, _ = _toolbar_anchor(win, bottom)
+    win.setCorner(Qt.Corner.BottomRightCorner, RightDockWidgetArea)
+    qapp.processEvents()
+    after_x, _, after_w, _ = _toolbar_anchor(win, bottom)
+    assert after_x == before_x
+    assert after_w < before_w
+
+
+def test_set_corner_ignores_invalid_assignment(qapp):
+    """Invalid corner-area combinations are ignored."""
+    win = LMainWindow()
+    win.resize(600, 400)
+    top = _sized_toolbar("Top")
+    left = _sized_toolbar("Left")
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    win.show()
+    qapp.processEvents()
+    before = _toolbar_anchor(win, top)
+    win.setCorner(Qt.Corner.TopLeftCorner, BottomDockWidgetArea)
+    qapp.processEvents()
+    assert _toolbar_anchor(win, top) == before
 
 
 # ------------------------------------------------------------------
@@ -168,3 +391,22 @@ def test_create_popup_menu_with_toolbars(qapp):
     texts = [a.text() for a in actions if not a.isSeparator()]
     assert "MyDock" in texts
     assert "MyToolbar" in texts
+
+
+def test_create_popup_menu_with_mixed_toolbar_areas(qapp):
+    """Popup menu includes toolbars from mixed areas once each."""
+    win = LMainWindow()
+    top = win.addToolBar("TopToolbar")
+    left = QToolBar("LeftToolbar")
+    right = QToolBar("RightToolbar")
+    bottom = QToolBar("BottomToolbar")
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, right)
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, bottom)
+
+    menu = win.createPopupMenu()
+    texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+    assert texts.count(top.windowTitle()) == 1
+    assert texts.count(left.windowTitle()) == 1
+    assert texts.count(right.windowTitle()) == 1
+    assert texts.count(bottom.windowTitle()) == 1

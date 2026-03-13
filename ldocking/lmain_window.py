@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QMainWindow,
     QMenu,
     QMenuBar,
@@ -103,7 +104,17 @@ class LMainWindow(QWidget):
         self._menu_bar: QWidget | None = None
         self._status_bar: QStatusBar | None = None
         self._tool_bars: list[QToolBar] = []
+        self._toolbar_area_map: dict[QToolBar, Qt.ToolBarArea] = {}
+        self._toolbar_rows: dict[Qt.ToolBarArea, list[list[QToolBar]]] = {}
+        self._pending_toolbar_breaks: set[Qt.ToolBarArea] = set()
+        self._corner_owners: dict[Qt.Corner, Qt.DockWidgetArea] = {
+            Qt.Corner.TopLeftCorner: TopDockWidgetArea,
+            Qt.Corner.TopRightCorner: TopDockWidgetArea,
+            Qt.Corner.BottomLeftCorner: BottomDockWidgetArea,
+            Qt.Corner.BottomRightCorner: BottomDockWidgetArea,
+        }
         self._dock_map: dict[LDockWidget, Qt.DockWidgetArea] = {}
+        self._pending_dock_restore: dict[str, dict[str, object]] = {}
         self._dock_options = _DEFAULT_DOCK_OPTIONS
 
         self._build_layout()
@@ -117,18 +128,47 @@ class LMainWindow(QWidget):
         self._menu_bar_slot.setMaximumHeight(0)
         self._root_layout.addWidget(self._menu_bar_slot)
 
-        self._toolbar_container = QWidget()
-        self._toolbar_layout = QVBoxLayout(self._toolbar_container)
-        self._toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        self._toolbar_layout.setSpacing(0)
-        self._toolbar_container.setMaximumHeight(0)
-        self._root_layout.addWidget(self._toolbar_container)
+        self._toolbar_containers: dict[Qt.ToolBarArea, QWidget] = {}
+        self._toolbar_layouts: dict[Qt.ToolBarArea, QHBoxLayout | QVBoxLayout] = {}
+        for area in (
+            Qt.ToolBarArea.TopToolBarArea,
+            Qt.ToolBarArea.LeftToolBarArea,
+            Qt.ToolBarArea.RightToolBarArea,
+            Qt.ToolBarArea.BottomToolBarArea,
+        ):
+            container = QWidget()
+            layout: QHBoxLayout | QVBoxLayout
+            if area in (
+                Qt.ToolBarArea.TopToolBarArea,
+                Qt.ToolBarArea.BottomToolBarArea,
+            ):
+                layout = QVBoxLayout(container)
+                container.setMaximumHeight(0)
+            else:
+                layout = QHBoxLayout(container)
+                container.setMaximumWidth(0)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            self._toolbar_containers[area] = container
+            self._toolbar_layouts[area] = layout
+            self._toolbar_rows[area] = []
+        self._root_layout.addWidget(self._toolbar_containers[Qt.ToolBarArea.TopToolBarArea])
+
+        self._main_host = QWidget()
+        self._main_layout = QHBoxLayout(self._main_host)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(0)
+        self._main_layout.addWidget(self._toolbar_containers[Qt.ToolBarArea.LeftToolBarArea])
 
         self._content_host = QWidget()
         self._content_layout = QVBoxLayout(self._content_host)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
-        self._root_layout.addWidget(self._content_host, 1)
+        self._main_layout.addWidget(self._content_host, 1)
+        self._main_layout.addWidget(self._toolbar_containers[Qt.ToolBarArea.RightToolBarArea])
+
+        self._root_layout.addWidget(self._main_host, 1)
+        self._root_layout.addWidget(self._toolbar_containers[Qt.ToolBarArea.BottomToolBarArea])
 
         self._dock_areas: dict[Qt.DockWidgetArea, LDockArea] = {
             LeftDockWidgetArea: LDockArea(LeftDockWidgetArea),
@@ -145,6 +185,7 @@ class LMainWindow(QWidget):
         self._status_bar_widget = QStatusBar()
         self._root_layout.addWidget(self._status_bar_widget)
         self._status_bar = self._status_bar_widget
+        self._apply_corner_ownership()
 
     def _rebuild_content_tree(self) -> None:
         self._detach_reusable_widgets()
@@ -384,6 +425,26 @@ class LMainWindow(QWidget):
     def _dock_id(self, dock: LDockWidget) -> str | None:
         return dock.objectName() or dock.windowTitle() or None
 
+    def _allow_tabs(self) -> bool:
+        return bool(
+            self._dock_options
+            & (
+                QMainWindow.DockOption.AllowTabbedDocks
+                | QMainWindow.DockOption.ForceTabbedDocks
+            )
+        )
+
+    def _force_tabbed_docks(self) -> bool:
+        return bool(self._dock_options & QMainWindow.DockOption.ForceTabbedDocks)
+
+    def _allow_nested_docks(self) -> bool:
+        return bool(self._dock_options & QMainWindow.DockOption.AllowNestedDocks) and not self._force_tabbed_docks()
+
+    def _payload_allows_area(
+        self, docks: list[LDockWidget], area: Qt.DockWidgetArea
+    ) -> bool:
+        return all(dock.isAreaAllowed(area) for dock in docks)
+
     def _area_state(self, area: Qt.DockWidgetArea) -> object | None:
         leaf = self._leaf_for_area(area)
         return leaf.area_state if leaf is not None else None
@@ -603,13 +664,7 @@ class LMainWindow(QWidget):
         index: int | None = None,
     ) -> object | None:
         current = self._area_state(area)
-        allow_tabs = bool(
-            self._dock_options
-            & (
-                QMainWindow.DockOption.AllowTabbedDocks
-                | QMainWindow.DockOption.ForceTabbedDocks
-            )
-        )
+        allow_tabs = self._allow_tabs()
         if current is None:
             return deepcopy(payload)
         if allow_tabs:
@@ -738,16 +793,10 @@ class LMainWindow(QWidget):
 
     def setDockOptions(self, options: QMainWindow.DockOption) -> None:
         self._dock_options = options
-        allow_tabs = bool(
-            options
-            & (
-                QMainWindow.DockOption.AllowTabbedDocks
-                | QMainWindow.DockOption.ForceTabbedDocks
-            )
-        )
+        allow_tabs = self._allow_tabs()
         vertical_tabs = bool(options & QMainWindow.DockOption.VerticalTabs)
         grouped_dragging = bool(options & QMainWindow.DockOption.GroupedDragging)
-        allow_nested = bool(options & QMainWindow.DockOption.AllowNestedDocks)
+        allow_nested = self._allow_nested_docks()
         for area in self._dock_areas.values():
             area.set_options(
                 allow_tabs=allow_tabs,
@@ -773,7 +822,16 @@ class LMainWindow(QWidget):
         return QTabWidget.TabPosition.North
 
     def setCorner(self, corner: Qt.Corner, area: Qt.DockWidgetArea) -> None:
-        """No-op: corner ownership is implicit in the current compatibility layout."""
+        valid_areas = {
+            Qt.Corner.TopLeftCorner: {TopDockWidgetArea, LeftDockWidgetArea},
+            Qt.Corner.TopRightCorner: {TopDockWidgetArea, RightDockWidgetArea},
+            Qt.Corner.BottomLeftCorner: {BottomDockWidgetArea, LeftDockWidgetArea},
+            Qt.Corner.BottomRightCorner: {BottomDockWidgetArea, RightDockWidgetArea},
+        }
+        if area not in valid_areas.get(corner, set()):
+            return
+        self._corner_owners[corner] = area
+        self._apply_corner_ownership()
 
     def setCentralWidget(self, widget: QWidget) -> None:
         if self._central_widget is not None:
@@ -863,6 +921,32 @@ class LMainWindow(QWidget):
 
     def dockWidgetArea(self, dock: LDockWidget) -> Qt.DockWidgetArea:
         return self._area_for_dock(dock)
+
+    def restoreDockWidget(self, dock: LDockWidget) -> bool:
+        ident = self._dock_id(dock)
+        if ident is None:
+            return False
+        entry = self._pending_dock_restore.pop(ident, None)
+        if entry is None:
+            return False
+        try:
+            area = Qt.DockWidgetArea(int(entry["area"]))
+        except (KeyError, TypeError, ValueError):
+            return False
+        resolved_area = self._resolve_dock_area(dock, area)
+        if resolved_area is None:
+            return False
+
+        dock._pre_float_area_side = resolved_area
+        dock._pre_float_position = int(entry.get("tab_index", 0))
+        dock._floating = True
+        self.addDockWidget(resolved_area, dock)
+        if entry.get("floating"):
+            geometry = entry.get("geometry")
+            dock.setFloating(True)
+            if isinstance(geometry, list) and len(geometry) == 4:
+                dock.setGeometry(geometry[0], geometry[1], geometry[2], geometry[3])
+        return True
 
     def tabifyDockWidget(self, first: LDockWidget, second: LDockWidget) -> None:
         area = self._area_for_dock(first)
@@ -986,59 +1070,345 @@ class LMainWindow(QWidget):
     def menuWidget(self) -> QWidget | None:
         return self._menu_bar
 
+    def _normalize_toolbar_area(self, area: Qt.ToolBarArea) -> Qt.ToolBarArea:
+        if area in (
+            Qt.ToolBarArea.TopToolBarArea,
+            Qt.ToolBarArea.LeftToolBarArea,
+            Qt.ToolBarArea.RightToolBarArea,
+            Qt.ToolBarArea.BottomToolBarArea,
+        ):
+            return area
+        return Qt.ToolBarArea.TopToolBarArea
+
+    def _toolbar_extent(self, area: Qt.ToolBarArea) -> int:
+        container = self._toolbar_containers[area]
+        if not self._toolbar_rows[area]:
+            return 0
+        hint = container.sizeHint()
+        if area in (
+            Qt.ToolBarArea.TopToolBarArea,
+            Qt.ToolBarArea.BottomToolBarArea,
+        ):
+            return max(container.height(), hint.height())
+        return max(container.width(), hint.width())
+
+    def _apply_corner_ownership(self) -> None:
+        top = Qt.ToolBarArea.TopToolBarArea
+        bottom = Qt.ToolBarArea.BottomToolBarArea
+        left = Qt.ToolBarArea.LeftToolBarArea
+        right = Qt.ToolBarArea.RightToolBarArea
+
+        top_extent = self._toolbar_extent(top)
+        bottom_extent = self._toolbar_extent(bottom)
+        left_extent = self._toolbar_extent(left)
+        right_extent = self._toolbar_extent(right)
+
+        self._toolbar_layouts[top].setContentsMargins(
+            left_extent if self._corner_owners[Qt.Corner.TopLeftCorner] == LeftDockWidgetArea else 0,
+            0,
+            right_extent if self._corner_owners[Qt.Corner.TopRightCorner] == RightDockWidgetArea else 0,
+            0,
+        )
+        self._toolbar_layouts[bottom].setContentsMargins(
+            left_extent if self._corner_owners[Qt.Corner.BottomLeftCorner] == LeftDockWidgetArea else 0,
+            0,
+            right_extent if self._corner_owners[Qt.Corner.BottomRightCorner] == RightDockWidgetArea else 0,
+            0,
+        )
+        self._toolbar_layouts[left].setContentsMargins(
+            0,
+            top_extent if self._corner_owners[Qt.Corner.TopLeftCorner] == TopDockWidgetArea else 0,
+            0,
+            bottom_extent if self._corner_owners[Qt.Corner.BottomLeftCorner] == BottomDockWidgetArea else 0,
+        )
+        self._toolbar_layouts[right].setContentsMargins(
+            0,
+            top_extent if self._corner_owners[Qt.Corner.TopRightCorner] == TopDockWidgetArea else 0,
+            0,
+            bottom_extent if self._corner_owners[Qt.Corner.BottomRightCorner] == BottomDockWidgetArea else 0,
+        )
+        for container in self._toolbar_containers.values():
+            container.updateGeometry()
+            container.update()
+
+    def _rebuild_toolbar_area(self, area: Qt.ToolBarArea) -> None:
+        area = self._normalize_toolbar_area(area)
+        layout = self._toolbar_layouts[area]
+        container = self._toolbar_containers[area]
+        for row in self._toolbar_rows[area]:
+            for toolbar in row:
+                if toolbar.parent() is not None:
+                    toolbar.setParent(None)
+        while layout.count():
+            item = layout.takeAt(0)
+            if item and item.widget():
+                item.widget().setParent(None)
+        for row in self._toolbar_rows[area]:
+            row_widget = QWidget(container)
+            if area in (
+                Qt.ToolBarArea.TopToolBarArea,
+                Qt.ToolBarArea.BottomToolBarArea,
+            ):
+                row_layout = QHBoxLayout(row_widget)
+            else:
+                row_layout = QVBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(0)
+            for toolbar in row:
+                toolbar.setParent(row_widget)
+                row_layout.addWidget(toolbar)
+            layout.addWidget(row_widget)
+        if area in (
+            Qt.ToolBarArea.TopToolBarArea,
+            Qt.ToolBarArea.BottomToolBarArea,
+        ):
+            container.setMaximumHeight(16777215 if self._toolbar_rows[area] else 0)
+        else:
+            container.setMaximumWidth(16777215 if self._toolbar_rows[area] else 0)
+        self._apply_corner_ownership()
+
+    def _remove_toolbar_from_rows(self, toolbar: QToolBar) -> None:
+        for area, rows in self._toolbar_rows.items():
+            changed = False
+            for row in list(rows):
+                if toolbar in row:
+                    if toolbar.parent() is not None:
+                        toolbar.setParent(None)
+                    row.remove(toolbar)
+                    changed = True
+                if not row:
+                    rows.remove(row)
+                    changed = True
+            if changed:
+                self._rebuild_toolbar_area(area)
+
     def addToolBar(
         self, toolbar_or_title_or_area, toolbar: QToolBar | None = None
     ) -> QToolBar:
-        if toolbar is not None:
+        area = Qt.ToolBarArea.TopToolBarArea
+        if isinstance(toolbar_or_title_or_area, Qt.ToolBarArea):
+            area = self._normalize_toolbar_area(toolbar_or_title_or_area)
+            tb = toolbar
+        elif toolbar is not None:
             tb = toolbar
         elif isinstance(toolbar_or_title_or_area, str):
             tb = QToolBar(toolbar_or_title_or_area)
         else:
             tb = toolbar_or_title_or_area
-        self._tool_bars.append(tb)
-        self._toolbar_layout.addWidget(tb)
-        self._toolbar_container.setMaximumHeight(16777215)
+        if tb is None:
+            raise ValueError("toolbar must not be None")
+        self._remove_toolbar_from_rows(tb)
+        if tb not in self._tool_bars:
+            self._tool_bars.append(tb)
+        area = self._normalize_toolbar_area(area)
+        self._toolbar_area_map[tb] = area
+        rows = self._toolbar_rows[area]
+        if not rows or area in self._pending_toolbar_breaks:
+            rows.append([])
+            self._pending_toolbar_breaks.discard(area)
+        rows[-1].append(tb)
+        self._rebuild_toolbar_area(area)
         return tb
 
     def removeToolBar(self, toolbar: QToolBar) -> None:
         if toolbar in self._tool_bars:
             self._tool_bars.remove(toolbar)
-            toolbar.setParent(None)
-            if not self._tool_bars:
-                self._toolbar_container.setMaximumHeight(0)
+            self._toolbar_area_map.pop(toolbar, None)
+            self._remove_toolbar_from_rows(toolbar)
 
     def insertToolBar(self, before: QToolBar, toolbar: QToolBar) -> None:
         if toolbar in self._tool_bars:
             self._tool_bars.remove(toolbar)
             toolbar.setParent(None)
+        self._remove_toolbar_from_rows(toolbar)
         idx = (
             self._tool_bars.index(before)
             if before in self._tool_bars
             else len(self._tool_bars)
         )
         self._tool_bars.insert(idx, toolbar)
-        self._toolbar_layout.insertWidget(idx, toolbar)
-        self._toolbar_container.setMaximumHeight(16777215)
+        area = self._normalize_toolbar_area(
+            self._toolbar_area_map.get(before, Qt.ToolBarArea.TopToolBarArea)
+        )
+        self._toolbar_area_map[toolbar] = area
+        inserted = False
+        for row in self._toolbar_rows[area]:
+            if before in row:
+                row.insert(row.index(before), toolbar)
+                inserted = True
+                break
+        if not inserted:
+            if not self._toolbar_rows[area]:
+                self._toolbar_rows[area].append([])
+            self._toolbar_rows[area][-1].append(toolbar)
+        self._rebuild_toolbar_area(area)
 
     def toolBars(self) -> list[QToolBar]:
         return list(self._tool_bars)
 
     def toolBarArea(self, toolbar: QToolBar) -> Qt.ToolBarArea:
-        return Qt.ToolBarArea.TopToolBarArea
+        return self._toolbar_area_map.get(toolbar, Qt.ToolBarArea.TopToolBarArea)
 
     def addToolBarBreak(
         self, area: Qt.ToolBarArea = Qt.ToolBarArea.TopToolBarArea
     ) -> None:
-        pass
+        self._pending_toolbar_breaks.add(self._normalize_toolbar_area(area))
 
     def removeToolBarBreak(self, before: QToolBar) -> None:
-        pass
+        area = self._toolbar_area_map.get(before)
+        if area is None:
+            return
+        rows = self._toolbar_rows[area]
+        for idx, row in enumerate(rows):
+            if before in row and idx > 0 and row and row[0] is before:
+                rows[idx - 1].extend(row)
+                rows.pop(idx)
+                self._rebuild_toolbar_area(area)
+                return
 
     def insertToolBarBreak(self, before: QToolBar) -> None:
-        pass
+        area = self._toolbar_area_map.get(before)
+        if area is None:
+            return
+        rows = self._toolbar_rows[area]
+        for idx, row in enumerate(rows):
+            if before in row:
+                pos = row.index(before)
+                if pos == 0:
+                    return
+                rows.insert(idx + 1, row[pos:])
+                del row[pos:]
+                self._rebuild_toolbar_area(area)
+                return
 
     def toolBarBreak(self, toolbar: QToolBar) -> bool:
+        area = self._toolbar_area_map.get(toolbar)
+        if area is None:
+            return False
+        for idx, row in enumerate(self._toolbar_rows[area]):
+            if toolbar in row:
+                return idx > 0 and row and row[0] is toolbar
         return False
+
+    def _toolbar_id(self, toolbar: QToolBar) -> str | None:
+        return toolbar.objectName() or toolbar.windowTitle() or None
+
+    def _toolbar_areas(self) -> tuple[Qt.ToolBarArea, ...]:
+        return (
+            Qt.ToolBarArea.TopToolBarArea,
+            Qt.ToolBarArea.LeftToolBarArea,
+            Qt.ToolBarArea.RightToolBarArea,
+            Qt.ToolBarArea.BottomToolBarArea,
+        )
+
+    def _export_toolbar_state(self) -> dict[str, object]:
+        toolbars: list[dict[str, int | str]] = []
+        for area in self._toolbar_areas():
+            for row_index, row in enumerate(self._toolbar_rows[area]):
+                for index, toolbar in enumerate(row):
+                    ident = self._toolbar_id(toolbar)
+                    if not ident:
+                        continue
+                    toolbars.append(
+                        {
+                            "id": ident,
+                            "area": area.value,
+                            "row": row_index,
+                            "index": index,
+                        }
+                    )
+        corners = {
+            str(corner.value): area.value
+            for corner, area in self._corner_owners.items()
+        }
+        return {"toolbars": toolbars, "corners": corners}
+
+    def _restore_toolbar_state(self, payload: dict[str, object]) -> None:
+        toolbar_entries = payload.get("toolbars")
+        corners = payload.get("corners")
+
+        if isinstance(corners, dict):
+            valid_areas = {
+                Qt.Corner.TopLeftCorner: {TopDockWidgetArea, LeftDockWidgetArea},
+                Qt.Corner.TopRightCorner: {TopDockWidgetArea, RightDockWidgetArea},
+                Qt.Corner.BottomLeftCorner: {BottomDockWidgetArea, LeftDockWidgetArea},
+                Qt.Corner.BottomRightCorner: {BottomDockWidgetArea, RightDockWidgetArea},
+            }
+            for corner_value, area_value in corners.items():
+                try:
+                    corner = Qt.Corner(int(corner_value))
+                    area = Qt.DockWidgetArea(int(area_value))
+                except (TypeError, ValueError):
+                    continue
+                if area in valid_areas.get(corner, set()):
+                    self._corner_owners[corner] = area
+
+        if not isinstance(toolbar_entries, list):
+            self._apply_corner_ownership()
+            return
+
+        lookup = {
+            ident: toolbar
+            for toolbar in self._tool_bars
+            if (ident := self._toolbar_id(toolbar)) is not None
+        }
+        previous_area_map = {
+            toolbar: self._toolbar_area_map.get(toolbar, Qt.ToolBarArea.TopToolBarArea)
+            for toolbar in self._tool_bars
+        }
+
+        self._pending_toolbar_breaks.clear()
+        for area in self._toolbar_areas():
+            self._toolbar_rows[area] = []
+        for toolbar in self._tool_bars:
+            if toolbar.parent() is not None:
+                toolbar.setParent(None)
+
+        placed: set[QToolBar] = set()
+        ordered_toolbars: list[QToolBar] = []
+        by_area: dict[Qt.ToolBarArea, list[tuple[int, int, QToolBar]]] = {
+            area: [] for area in self._toolbar_areas()
+        }
+        for entry in toolbar_entries:
+            if not isinstance(entry, dict):
+                continue
+            toolbar = lookup.get(entry.get("id"))
+            if toolbar is None:
+                continue
+            try:
+                area = self._normalize_toolbar_area(Qt.ToolBarArea(int(entry["area"])))
+                row_index = int(entry.get("row", 0))
+                index = int(entry.get("index", 0))
+            except (KeyError, TypeError, ValueError):
+                continue
+            by_area[area].append((row_index, index, toolbar))
+            if toolbar not in placed:
+                ordered_toolbars.append(toolbar)
+                placed.add(toolbar)
+
+        for area in self._toolbar_areas():
+            rows: list[list[QToolBar]] = []
+            for row_index, index, toolbar in sorted(by_area[area], key=lambda item: (item[0], item[1])):
+                while len(rows) <= row_index:
+                    rows.append([])
+                rows[row_index].append(toolbar)
+                self._toolbar_area_map[toolbar] = area
+            self._toolbar_rows[area] = [row for row in rows if row]
+            self._rebuild_toolbar_area(area)
+
+        for toolbar in self._tool_bars:
+            if toolbar in placed:
+                continue
+            area = self._normalize_toolbar_area(previous_area_map.get(toolbar, Qt.ToolBarArea.TopToolBarArea))
+            if not self._toolbar_rows[area]:
+                self._toolbar_rows[area].append([])
+            self._toolbar_rows[area][-1].append(toolbar)
+            self._toolbar_area_map[toolbar] = area
+            ordered_toolbars.append(toolbar)
+            self._rebuild_toolbar_area(area)
+
+        self._tool_bars = ordered_toolbars
+        self._apply_corner_ownership()
 
     def statusBar(self) -> QStatusBar:
         return self._status_bar  # type: ignore[return-value]
@@ -1075,7 +1445,9 @@ class LMainWindow(QWidget):
     ) -> None:
         if not docks:
             return
-        resolved_area = self._resolve_dock_area(docks[0], area)
+        if not self._payload_allows_area(docks, area):
+            return
+        resolved_area = area
         if resolved_area is None:
             return
         source_areas = {
@@ -1114,14 +1486,15 @@ class LMainWindow(QWidget):
                 )
             self._dock_map[dock] = resolved_area
         target_id = target_id or (self._dock_id(target_dock) if target_dock is not None else None)
-        allow_nested = bool(self._dock_options & QMainWindow.DockOption.AllowNestedDocks)
+        allow_nested = self._allow_nested_docks()
+        force_tabbed = self._force_tabbed_docks()
         if mode == "tab" and target_id is not None:
             new_state = self._state_tabify(
                 self._area_state(resolved_area),
                 target_id,
                 payload_state,
             )
-        elif mode == "side" and target_id is not None and side is not None:
+        elif mode == "side" and target_id is not None and side is not None and not force_tabbed:
             new_state = self._state_split(
                 self._area_state(resolved_area),
                 target_id,
@@ -1201,6 +1574,7 @@ class LMainWindow(QWidget):
                 for area, area_obj in self._dock_areas.items()
             },
         }
+        payload.update(self._export_toolbar_state())
         return QByteArray(json.dumps(payload).encode())
 
     def restoreState(self, state: QByteArray, version: int = 0) -> bool:
@@ -1219,6 +1593,7 @@ class LMainWindow(QWidget):
                 ident = dock.objectName() or dock.windowTitle()
                 if ident:
                     lookup[ident] = dock
+            self._pending_dock_restore = {}
 
             for area_obj in self._dock_areas.values():
                 area_obj.restore_state(None, lookup)
@@ -1263,7 +1638,10 @@ class LMainWindow(QWidget):
 
             for entry in entries:
                 dock = lookup.get(entry["id"])
-                if dock is None or not entry.get("floating"):
+                if dock is None:
+                    self._pending_dock_restore[entry["id"]] = dict(entry)
+                    continue
+                if not entry.get("floating"):
                     continue
                 area = Qt.DockWidgetArea(entry["area"])
                 dock._pre_float_area_side = area
@@ -1301,6 +1679,9 @@ class LMainWindow(QWidget):
                 split = self._find_split(self._content_tree, "inner")
                 if split is not None:
                     split.sizes = list(inner)
+
+            if "toolbars" in data or "corners" in data:
+                self._restore_toolbar_state(data)
 
             return True
         except Exception:

@@ -16,15 +16,17 @@ Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses th
 
 - `addDockWidget()` and drag/drop now honor `allowedAreas()`. If the requested area is disallowed, the dock falls back to the first allowed side; if no areas are allowed, the operation is ignored.
 - Floating/re-docking preserves stable tab order within a dock area.
-- `saveState()` / `restoreState()` now preserve the active tab within each tabbed dock area.
+- `saveState()` / `restoreState()` now preserve the active tab within each tabbed dock area, plus toolbar areas/order/breaks and toolbar-corner ownership.
 - `toggleViewAction()` restores hidden docks without losing floating state, and re-selects a dock when it is shown inside a tab group.
 - Drag/drop now distinguishes side-dock targets from center tab-drop targets within visible dock areas.
-- `ForceTabbedDocks` is honored for same-area additions within the current splitter-based layout model.
-- `AllowNestedDocks` now enables nested relative splits inside a top-level dock side instead of flattening all additions into one strip.
-- `GroupedDragging` now drags an entire tab group together when a tab from that group is torn off.
+- `ForceTabbedDocks` is enforced for occupied sides: same-side additions and side drops tab into the existing group instead of creating side-by-side splits.
+- `AllowNestedDocks` enables target-local nested splits only when tab forcing is off; when disabled, targeted side drops collapse to top-level side placement.
+- `GroupedDragging` drags an entire tab group together, and grouped drops are rejected if any dock in the group disallows the target area.
 - The top-level docked layout is now persisted as a root content tree around the central widget; `area_trees` remain restore-only fallback for older saved states.
+- Toolbars now support all four Qt toolbar areas plus break rows, and `setCorner()` adjusts which area visually owns each toolbar corner.
 - `saveState(version)` persists the caller-provided version number, and `restoreState(state, version)` requires the same version to succeed.
-- Toolbar breaks and `setCorner()` remain intentional no-ops because the splitter layout has a fixed structure.
+- `restoreDockWidget()` is supported for docks that are created after `restoreState()`.
+- `setCorner()` now controls toolbar-corner ownership for the four-area toolbar shell.
 
 ## Installation
 
@@ -152,11 +154,11 @@ win.addToolBar(toolbar_or_title)   # QToolBar or str
 win.removeToolBar(toolbar)
 win.insertToolBar(before, toolbar)
 win.toolBars() -> list[QToolBar]
-win.toolBarArea(toolbar) -> Qt.ToolBarArea   # always TopToolBarArea
-win.addToolBarBreak(...)   # no-op (single toolbar row)
+win.toolBarArea(toolbar) -> Qt.ToolBarArea   # Top, Bottom, Left, or Right
+win.addToolBarBreak(...)   # supported in all toolbar areas
 win.statusBar() -> QStatusBar
 win.setStatusBar(status_bar)
-win.setCorner(corner, area)   # no-op; splitter geometry handles corners
+win.setCorner(corner, area)   # controls toolbar-corner ownership
 win.createPopupMenu() -> QMenu | None
 win.saveState(version=0) -> QByteArray
 win.restoreState(state, version=0) -> bool
@@ -254,6 +256,6 @@ python tests/visual_compare_demo.py # side-by-side Qt vs ldocking visual compari
 - `LMainWindow` and `LDockWidget` intentionally do **not** inherit from their Qt counterparts. Inheriting `QMainWindow` or `QDockWidget` would trigger the C++ constructor that creates `QDockAreaLayout`.
 - Enums are re-exported **by reference** (not copied), so `isinstance(x, QDockWidget.DockWidgetFeature)` returns `True` for values sourced from `ldocking`.
 - `LDragManager` is a singleton; only one drag operation is active at a time.
-- `setCorner` is a no-op because splitter geometry naturally handles corner ownership.
-- `addToolBar` accepts either a `QToolBar` instance or a `str` title (matches both `QMainWindow` overloads). All toolbars live at the top; `toolBarArea` always returns `TopToolBarArea` and toolbar-break methods are no-ops.
+- `setCorner` controls which toolbar area visually owns each window corner.
+- `addToolBar` accepts either a `QToolBar` instance or a `str` title (matches both `QMainWindow` overloads). All four Qt toolbar areas are supported, and toolbar-break methods create additional lines within the selected area.
 - QSS background rules require `WA_StyledBackground = True`, which is set on `LMainWindow`, `LDockWidget`, and `LDockArea`. The drop indicator uses `QPalette.Highlight` for theme awareness.

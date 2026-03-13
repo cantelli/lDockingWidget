@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QToolBar
 
 from ldocking import (
     LDockWidget,
@@ -22,6 +22,13 @@ def _make_dock(name: str) -> LDockWidget:
     d.setObjectName(name)
     d.setWidget(QLabel(name))
     return d
+
+
+def _make_toolbar(name: str) -> QToolBar:
+    toolbar = QToolBar(name)
+    toolbar.setObjectName(name)
+    toolbar.addAction(name)
+    return toolbar
 
 
 def test_save_restore_basic(qapp):
@@ -242,3 +249,148 @@ def test_content_tree_leaf_state_tracks_docked_mutations(qapp):
     assert leaf is not None
     assert leaf.area_state["type"] == "tabs"
     assert [child["id"] for child in leaf.area_state["children"]] == ["da", "db"]
+
+
+def test_save_restore_toolbar_state_round_trip(qapp):
+    """saveState persists toolbar areas, ordering, breaks, and corner ownership."""
+    win = LMainWindow()
+    win.resize(800, 600)
+    top = _make_toolbar("top")
+    top2 = _make_toolbar("top2")
+    left = _make_toolbar("left")
+    right = _make_toolbar("right")
+    bottom = _make_toolbar("bottom")
+
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top2)
+    win.insertToolBarBreak(top2)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, right)
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, bottom)
+    win.setCorner(Qt.Corner.TopLeftCorner, LeftDockWidgetArea)
+    win.setCorner(Qt.Corner.BottomRightCorner, RightDockWidgetArea)
+
+    state = win.saveState()
+
+    win.removeToolBar(top)
+    win.removeToolBar(top2)
+    win.removeToolBar(left)
+    win.removeToolBar(right)
+    win.removeToolBar(bottom)
+    win.addToolBar(Qt.ToolBarArea.BottomToolBarArea, top)
+    win.addToolBar(Qt.ToolBarArea.RightToolBarArea, top2)
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, left)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, right)
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, bottom)
+    win.setCorner(Qt.Corner.TopLeftCorner, TopDockWidgetArea)
+    win.setCorner(Qt.Corner.BottomRightCorner, BottomDockWidgetArea)
+
+    assert win.restoreState(state) is True
+    assert win.toolBarArea(top) == Qt.ToolBarArea.TopToolBarArea
+    assert win.toolBarArea(top2) == Qt.ToolBarArea.TopToolBarArea
+    assert win.toolBarArea(left) == Qt.ToolBarArea.LeftToolBarArea
+    assert win.toolBarArea(right) == Qt.ToolBarArea.RightToolBarArea
+    assert win.toolBarArea(bottom) == Qt.ToolBarArea.BottomToolBarArea
+    assert win.toolBarBreak(top2) is True
+    assert win._tool_bars[:5] == [top, top2, left, right, bottom]
+    assert win._corner_owners[Qt.Corner.TopLeftCorner] == LeftDockWidgetArea
+    assert win._corner_owners[Qt.Corner.BottomRightCorner] == RightDockWidgetArea
+
+
+def test_restore_state_without_toolbar_data_keeps_current_toolbar_shell(qapp):
+    """Older state payloads without toolbar data still restore successfully."""
+    win = LMainWindow()
+    top = _make_toolbar("top")
+    left = _make_toolbar("left")
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+    win.addToolBar(Qt.ToolBarArea.LeftToolBarArea, left)
+    win.setCorner(Qt.Corner.TopLeftCorner, LeftDockWidgetArea)
+
+    payload = json.loads(bytes(win.saveState()).decode())
+    payload.pop("toolbars", None)
+    payload.pop("corners", None)
+    state = QByteArray(json.dumps(payload).encode())
+
+    assert win.restoreState(state) is True
+    assert win.toolBarArea(top) == Qt.ToolBarArea.TopToolBarArea
+    assert win.toolBarArea(left) == Qt.ToolBarArea.LeftToolBarArea
+    assert win._corner_owners[Qt.Corner.TopLeftCorner] == LeftDockWidgetArea
+
+
+def test_restore_state_skips_missing_toolbar_ids(qapp):
+    """Unknown toolbar ids in saved state do not fail restore."""
+    win = LMainWindow()
+    top = _make_toolbar("top")
+    win.addToolBar(Qt.ToolBarArea.TopToolBarArea, top)
+
+    payload = json.loads(bytes(win.saveState()).decode())
+    payload["toolbars"].append(
+        {
+            "id": "ghost",
+            "area": int(Qt.ToolBarArea.RightToolBarArea.value),
+            "row": 0,
+            "index": 0,
+        }
+    )
+    state = QByteArray(json.dumps(payload).encode())
+
+    assert win.restoreState(state) is True
+    assert win.toolBarArea(top) == Qt.ToolBarArea.TopToolBarArea
+
+
+def test_restore_dock_widget_late_docked_restore(qapp):
+    """restoreDockWidget restores a dock created after restoreState()."""
+    source = LMainWindow()
+    da = _make_dock("da")
+    db = _make_dock("db")
+    source.addDockWidget(LeftDockWidgetArea, da)
+    source.addDockWidget(RightDockWidgetArea, db)
+    state = source.saveState()
+
+    win = LMainWindow()
+    da2 = _make_dock("da")
+    win.addDockWidget(TopDockWidgetArea, da2)
+
+    assert win.restoreState(state) is True
+    late = _make_dock("db")
+    assert win.restoreDockWidget(late) is True
+    assert win.dockWidgetArea(late) == RightDockWidgetArea
+    assert win.restoreDockWidget(_make_dock("ghost")) is False
+
+
+def test_restore_dock_widget_late_floating_restore(qapp):
+    """restoreDockWidget restores floating docks with saved geometry."""
+    source = LMainWindow()
+    dock = _make_dock("floaty")
+    source.addDockWidget(LeftDockWidgetArea, dock)
+    dock.setFloating(True)
+    dock.setGeometry(50, 60, 220, 180)
+    state = source.saveState()
+
+    win = LMainWindow()
+    assert win.restoreState(state) is True
+    late = _make_dock("floaty")
+    assert win.restoreDockWidget(late) is True
+    assert late.isFloating()
+    geometry = late.geometry()
+    assert (geometry.x(), geometry.y(), geometry.width(), geometry.height()) == (50, 60, 220, 180)
+
+
+def test_restore_dock_widget_late_tabbed_restore(qapp):
+    """restoreDockWidget restores a late dock into the saved tabbed area."""
+    source = LMainWindow()
+    first = _make_dock("first")
+    second = _make_dock("second")
+    source.addDockWidget(LeftDockWidgetArea, first)
+    source.addDockWidget(LeftDockWidgetArea, second)
+    state = source.saveState()
+
+    win = LMainWindow()
+    first_live = _make_dock("first")
+    win.addDockWidget(RightDockWidgetArea, first_live)
+
+    assert win.restoreState(state) is True
+    second_live = _make_dock("second")
+    assert win.restoreDockWidget(second_live) is True
+    assert win.dockWidgetArea(second_live) == LeftDockWidgetArea
+    assert second_live in win.tabifiedDockWidgets(first_live)

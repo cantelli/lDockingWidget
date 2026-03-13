@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QSizePolicy, QSplitter, QTabWidget, QVBoxLayout, QWidget
 
 from .ldock_tab_area import LDockTabArea
@@ -128,6 +128,39 @@ class LDockArea(QWidget):
 
     def all_docks(self) -> list[LDockWidget]:
         return list(self._docks)
+
+    def drop_target_at_global_pos(
+        self, global_pos
+    ) -> tuple[LDockWidget, QRect, bool] | None:
+        seen_nodes: set[int] = set()
+        for dock in reversed(self.all_docks()):
+            node = self._dock_to_node.get(dock)
+            if node is None:
+                continue
+            node_id = id(node)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
+            if isinstance(node, _TabNode):
+                tab_area = self._node_tab_areas.get(node_id)
+                if tab_area is None:
+                    continue
+                rect = QRect(
+                    tab_area.mapToGlobal(tab_area.rect().topLeft()),
+                    tab_area.size(),
+                )
+                if rect.contains(global_pos):
+                    current = node.docks[node.current_index] if node.docks else dock
+                    tab_bar_rect = QRect(
+                        tab_area._tab_bar.mapToGlobal(tab_area._tab_bar.rect().topLeft()),
+                        tab_area._tab_bar.size(),
+                    )
+                    return current, rect, tab_bar_rect.contains(global_pos)
+                continue
+            rect = QRect(dock.mapToGlobal(dock.rect().topLeft()), dock.size())
+            if rect.contains(global_pos):
+                return dock, rect, False
+        return None
 
     def set_options(
         self,
