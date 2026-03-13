@@ -296,6 +296,14 @@ def make_set_corner(corner, area):
     return action
 
 
+def make_toggle_view_action(idx: int):
+    """Toggle a dock through its QAction on both sides."""
+    def action(qt_win, qt_docks, l_win, l_docks, qt_toolbars=None, l_toolbars=None):
+        qt_docks[idx].toggleViewAction().trigger()
+        l_docks[idx].toggleViewAction().trigger()
+    return action
+
+
 # ── Scenario table ─────────────────────────────────────────────────────────────
 #
 # Each scenario dict:
@@ -376,14 +384,14 @@ SCENARIOS = [
         "name": "add_dock_to_occupied_area",
         "setup": [("A", Left), ("B", None)],
         "actions": [make_dock_to_area(1, Left)],
-        "check": ["area"],
+        "check": ["area", "tabs"],
     },
 
     # 7 ── close one dock in a tabbed pair ────────────────────────────────────
     {
         "name": "close_dock",
         "setup": [("A", Left), ("B", Left)],
-        "actions": [make_close_dock(0)],
+        "actions": [make_tabify_both(0, 1), make_close_dock(0)],
         "check": ["visible"],
     },
 
@@ -405,14 +413,14 @@ SCENARIOS = [
         "name": "tabify_explicit",
         "setup": [("A", Left), ("B", Left)],
         "actions": [
-            make_tabify_qt_only(0, 1),  # Qt: explicitly tabify A and B; L already tabs
+            make_tabify_both(0, 1),
         ],
         "check": ["tabs"],
     },
     {
         "name": "tabified_visible_pair",
         "setup": [("A", Left), ("B", Left)],
-        "actions": [],
+        "actions": [make_tabify_both(0, 1)],
         "check": ["visible"],
     },
 
@@ -421,8 +429,8 @@ SCENARIOS = [
         "name": "tabify_three_explicit",
         "setup": [("A", Left), ("B", Left), ("C", Left)],
         "actions": [
-            make_tabify_qt_only(0, 1),
-            make_tabify_qt_only(0, 2),
+            make_tabify_both(0, 1),
+            make_tabify_both(0, 2),
         ],
         "check": ["tabs"],
     },
@@ -432,7 +440,7 @@ SCENARIOS = [
         "name": "tabify_then_float_one",
         "setup": [("A", Left), ("B", Left)],
         "actions": [
-            make_tabify_qt_only(0, 1),
+            make_tabify_both(0, 1),
             make_float_dock(1),
         ],
         "check": ["tabs", "floating"],
@@ -486,8 +494,8 @@ SCENARIOS = [
         "name": "tabify_then_remove_middle",
         "setup": [("A", Left), ("B", Left), ("C", Left)],
         "actions": [
-            make_tabify_qt_only(0, 1),  # Qt: tabify A+B; L already tabs
-            make_tabify_qt_only(0, 2),  # Qt: tabify A+C; L already has all three
+            make_tabify_both(0, 1),
+            make_tabify_both(0, 2),
             make_remove_dock(1),        # remove B — A and C should still be peers
         ],
         "check": ["tabs"],
@@ -517,7 +525,7 @@ SCENARIOS = [
         "name": "save_restore_round_trip",
         "setup": [("A", Left), ("B", Left), ("C", Right)],
         "actions": [
-            make_tabify_qt_only(0, 1),
+            make_tabify_both(0, 1),
             make_save_restore_round_trip(),
         ],
         "check": ["area", "floating", "tabs"],
@@ -548,6 +556,39 @@ SCENARIOS = [
             make_save_restore_round_trip(),
         ],
         "check": ["area", "toolbar_area", "toolbar_break", "toolbar_order", "corners"],
+    },
+    {
+        "name": "labelme_shape_right_stack",
+        "setup": [
+            ("Flags", Right),
+            ("Annotation List", Right),
+            ("Label List", Right),
+            ("File List", Right),
+        ],
+        "actions": [],
+        "check": ["area", "tabs", "visible"],
+    },
+    {
+        "name": "labelme_shape_toggle_view",
+        "setup": [
+            ("Flags", Right),
+            ("Annotation List", Right),
+            ("Label List", Right),
+            ("File List", Right),
+        ],
+        "actions": [make_toggle_view_action(2), make_toggle_view_action(2)],
+        "check": ["visible", "tabs"],
+    },
+    {
+        "name": "labelme_shape_save_restore",
+        "setup": [
+            ("Flags", Right),
+            ("Annotation List", Right),
+            ("Label List", Right),
+            ("File List", Right),
+        ],
+        "actions": [make_save_restore_round_trip()],
+        "check": ["area", "floating", "tabs", "visible"],
     },
 ]
 
@@ -650,3 +691,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

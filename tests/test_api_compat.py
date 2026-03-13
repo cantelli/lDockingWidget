@@ -143,6 +143,7 @@ def test_tabified_dock_widgets(qapp):
     db.setWidget(QLabel("DB"))
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
+    win.tabifyDockWidget(da, db)
 
     assert db in win.tabifiedDockWidgets(da)
     assert da in win.tabifiedDockWidgets(db)

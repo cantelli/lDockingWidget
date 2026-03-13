@@ -311,7 +311,9 @@ class LDockArea(QWidget):
     def _detach_docks(self) -> None:
         for dock in self._docks:
             if dock.parent() is not None:
+                dock._tab_visibility_sync = True
                 dock.setParent(None)
+                dock._tab_visibility_sync = False
 
     def _build_widget(self, node: object, parent: QWidget) -> QWidget:
         if isinstance(node, _DockNode):
@@ -321,7 +323,12 @@ class LDockArea(QWidget):
             dock._set_tabbed_visibility_override(None)
             dock.setParent(parent)
             dock._title_bar.show()
-            dock.show()
+            dock._tab_visibility_sync = True
+            if dock._explicitly_hidden:
+                dock.hide()
+            else:
+                dock.show()
+            dock._tab_visibility_sync = False
             return dock
 
         if isinstance(node, _TabNode):
@@ -550,8 +557,16 @@ class LDockArea(QWidget):
         return None
 
     def _clear_layout(self) -> None:
+        from .ldock_widget import LDockWidget
+
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item and item.widget():
-                item.widget().hide()
-                item.widget().setParent(None)
+                widget = item.widget()
+                if isinstance(widget, LDockWidget):
+                    widget._tab_visibility_sync = True
+                    widget.hide()
+                    widget._tab_visibility_sync = False
+                else:
+                    widget.hide()
+                widget.setParent(None)

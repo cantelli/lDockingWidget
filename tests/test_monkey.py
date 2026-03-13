@@ -1,4 +1,5 @@
 """Tests for ldocking.monkey — QMainWindow/QDockWidget auto-replacement."""
+import importlib
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -9,6 +10,19 @@ from PySide6.QtCore import Qt
 
 import ldocking.monkey as monkey
 from ldocking import LDockWidget, LMainWindow
+
+FIXTURE_PREFIX = "tools.dock_benchmarks.fixtures"
+
+
+def _clear_fixture_modules():
+    for name in list(sys.modules):
+        if name == FIXTURE_PREFIX or name.startswith(f"{FIXTURE_PREFIX}."):
+            sys.modules.pop(name, None)
+
+
+def _load_fixture(module_name: str):
+    _clear_fixture_modules()
+    return importlib.import_module(f"{FIXTURE_PREFIX}.{module_name}")
 
 
 @pytest.fixture(autouse=True)
@@ -123,4 +137,44 @@ def test_monkey_exposes_set_tab_position(qapp):
     assert hasattr(win, "tabPosition")
     win.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.East)
     assert win.tabPosition(Qt.DockWidgetArea.RightDockWidgetArea) == QTabWidget.TabPosition.East
+    win.close()
+
+
+def test_imported_alias_before_patch_stays_native(qapp):
+    monkey.unpatch()
+    from PySide6.QtWidgets import QMainWindow as NativeImportedMainWindow
+
+    monkey.patch()
+    win = NativeImportedMainWindow()
+    assert type(win) is monkey._ORIG["QMainWindow"]
+    win.close()
+
+
+def test_qtpy_style_fixture_uses_native_classes_without_patch(qapp):
+    monkey.unpatch()
+    module = _load_fixture("qtpy_style_app")
+    assert module.QMAINWINDOW_CLASS is monkey._ORIG["QMainWindow"]
+    assert module.QDOCKWIDGET_CLASS is monkey._ORIG["QDockWidget"]
+    win = module.build_window()
+    assert type(win) is monkey._ORIG["QMainWindow"]
+    win.close()
+
+
+def test_qtpy_style_fixture_uses_ldocking_classes_when_patched(qapp):
+    monkey.patch()
+    module = _load_fixture("qtpy_style_app")
+    assert module.QMAINWINDOW_CLASS is LMainWindow
+    assert module.QDOCKWIDGET_CLASS is LDockWidget
+    win = module.build_window()
+    assert isinstance(win, LMainWindow)
+    win.close()
+
+
+def test_fixture_imported_before_patch_keeps_native_bindings(qapp):
+    monkey.unpatch()
+    module = _load_fixture("labelme_shape_app")
+    monkey.patch()
+    win = module.build_window()
+    assert type(win) is monkey._ORIG["QMainWindow"]
+    assert all(type(dock) is monkey._ORIG["QDockWidget"] for dock in win.findChildren(monkey._ORIG["QDockWidget"]))
     win.close()

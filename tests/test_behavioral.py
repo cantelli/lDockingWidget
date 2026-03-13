@@ -335,6 +335,43 @@ def test_toggle_view_action_hides_dock(qapp):
     assert not dock.isVisible()
 
 
+def test_toggle_view_action_created_before_show_starts_checked(qapp):
+    """A pre-show toggleViewAction matches Qt and hides on the first trigger."""
+    win = LMainWindow()
+    dock = _dock("d")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    action = dock.toggleViewAction()
+
+    win.show()
+    qapp.processEvents()
+
+    assert action.isChecked()
+    action.trigger()
+    qapp.processEvents()
+    assert not dock.isVisible()
+
+
+def test_hidden_dock_stays_hidden_across_unrelated_area_rebuild(qapp):
+    """Tabifying sibling docks does not resurrect another explicitly hidden dock."""
+    win = LMainWindow()
+    flags = _dock("Flags")
+    annotations = _dock("Annotation List")
+    hidden = _dock("Label List")
+    extra = _dock("File List")
+    for dock in (flags, annotations, hidden, extra):
+        win.addDockWidget(RightDockWidgetArea, dock)
+    win.show()
+    qapp.processEvents()
+
+    hidden.toggleViewAction().trigger()
+    qapp.processEvents()
+    assert not hidden.isVisible()
+
+    win.tabifyDockWidget(flags, annotations)
+    qapp.processEvents()
+    assert not hidden.isVisible()
+
+
 def test_toggle_view_action_shows_dock(qapp):
     """Triggering the action (checked) shows the dock."""
     win = LMainWindow()
@@ -354,6 +391,7 @@ def test_toggle_view_action_show_restores_hidden_tab_visibility_without_reselect
     db = _dock("db")
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
+    win.tabifyDockWidget(da, db)
     win.show()
     qapp.processEvents()
 
@@ -384,6 +422,7 @@ def test_tabified_non_current_dock_remains_visible_like_qt(qapp):
     dock_b = _dock("b")
     win.addDockWidget(LeftDockWidgetArea, dock_a)
     win.addDockWidget(LeftDockWidgetArea, dock_b)
+    win.tabifyDockWidget(dock_a, dock_b)
     win.show()
     qapp.processEvents()
 
@@ -414,6 +453,7 @@ def test_tabified_tab_switch_visibility_signals_match_qt(qapp):
     dock_b.visibilityChanged.connect(lambda value: signal_log.append(("b", value)))
     win.addDockWidget(LeftDockWidgetArea, dock_a)
     win.addDockWidget(LeftDockWidgetArea, dock_b)
+    win.tabifyDockWidget(dock_a, dock_b)
     win.show()
     qapp.processEvents()
 
@@ -457,6 +497,21 @@ def test_force_tabbed_docks_tabs_same_area(qapp):
     win.addDockWidget(LeftDockWidgetArea, db)
 
     assert db in win.tabifiedDockWidgets(da)
+
+
+def test_add_dock_widget_same_area_does_not_auto_tabify(qapp):
+    """Same-area addDockWidget matches Qt: split by default, tabify only when requested."""
+    win = LMainWindow()
+    da = _dock("da")
+    db = _dock("db")
+
+    win.addDockWidget(RightDockWidgetArea, da)
+    win.addDockWidget(RightDockWidgetArea, db)
+
+    assert win.tabifiedDockWidgets(da) == []
+    leaf = win._leaf_for_key("right")
+    assert leaf is not None
+    assert leaf.area_state["type"] == "split"
 
 
 def test_drag_manager_classifies_area_center_as_tab_target(qapp):
@@ -612,6 +667,7 @@ def test_drag_manager_targets_tab_group_bounds(qapp):
     db = _dock("db")
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
+    win.tabifyDockWidget(da, db)
     area = win._dock_areas[LeftDockWidgetArea]
     area.set_current_tab_dock(da)
     win.show()
@@ -744,6 +800,7 @@ def test_grouped_dragging_drop_preserves_current_tab(qapp):
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
     win.addDockWidget(RightDockWidgetArea, target)
+    win.tabifyDockWidget(da, db)
 
     source_area = win._dock_areas[LeftDockWidgetArea]
     source_area.set_current_tab_dock(db)
@@ -767,6 +824,7 @@ def test_grouped_dragging_rejects_drop_when_any_dock_disallows_area(qapp):
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
     win.addDockWidget(RightDockWidgetArea, target)
+    win.tabifyDockWidget(da, db)
 
     payload = win._dock_areas[LeftDockWidgetArea].docks_for_group_drag(da)
     before_left = [dock.windowTitle() for dock in win._dock_areas[LeftDockWidgetArea].all_docks()]
@@ -907,6 +965,8 @@ def test_tabified_dock_widgets(qapp):
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
     win.addDockWidget(LeftDockWidgetArea, dc)
+    win.tabifyDockWidget(da, db)
+    win.tabifyDockWidget(da, dc)
 
     peers_of_da = win.tabifiedDockWidgets(da)
     assert db in peers_of_da

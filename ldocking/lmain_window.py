@@ -863,10 +863,10 @@ class LMainWindow(QWidget):
         index: int | None = None,
     ) -> object | None:
         current = self._area_state(area)
-        allow_tabs = self._allow_tabs()
+        force_tabbed = self._force_tabbed_docks()
         if current is None:
             return deepcopy(payload)
-        if allow_tabs:
+        if force_tabbed:
             target_id = self._state_current_dock_id(current)
             if target_id is None:
                 ids = self._state_collect_ids(current)
@@ -1184,11 +1184,16 @@ class LMainWindow(QWidget):
             return
         old_area = self._area_for_dock(second)
         area_updates: dict[Qt.DockWidgetArea, object | None] = {}
+        target_state = self._area_state(area)
         if old_area != Qt.DockWidgetArea.NoDockWidgetArea:
-            area_updates[old_area] = self._state_remove_ids(self._area_state(old_area), {second_id})
+            removed_state = self._state_remove_ids(self._area_state(old_area), {second_id})
+            if old_area == area:
+                target_state = removed_state
+            else:
+                area_updates[old_area] = removed_state
         self._dock_map[second] = area
         area_updates[area] = self._state_tabify(
-            self._area_state(area), first_id, {"type": "dock", "id": second_id}
+            target_state, first_id, {"type": "dock", "id": second_id}
         )
         self._apply_area_state_updates(area_updates)
         second._main_window = self
@@ -2122,6 +2127,7 @@ class LMainWindow(QWidget):
                 "area": area.value,
                 "tab_index": tab_index,
                 "floating": dock._floating,
+                "visible": dock._toggle_action_checked_value(),
             }
             if dock._floating:
                 g = dock.geometry()
@@ -2201,6 +2207,20 @@ class LMainWindow(QWidget):
                 dock.show()
 
             self._apply_current_tab_ids(data.get("current_tabs", {}), lookup)
+
+            for entry in entries:
+                dock = lookup.get(entry["id"])
+                if dock is None:
+                    continue
+                if entry.get("visible", True):
+                    dock._explicitly_hidden = False
+                    if dock._current_area is not None and dock._current_area._tab_area is not None:
+                        dock._current_area._tab_area._sync_visibility()
+                    elif not dock._floating:
+                        dock.show()
+                    dock._sync_toggle_action_checked()
+                else:
+                    dock.setVisible(False)
 
             outer = data.get("outer_splitter")
             if outer and self._outer_splitter is not None:

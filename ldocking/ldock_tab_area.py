@@ -103,6 +103,7 @@ class LDockTabArea(QWidget):
         dock._title_bar.hide()
         self._tab_bar.addTab(dock.windowTitle())
         self._hidden_docks.discard(dock)
+        dock._explicitly_hidden = False
         self._exposed_docks.setdefault(dock, False)
         if hasattr(dock, "windowTitleChanged"):
             conn = dock.windowTitleChanged.connect(
@@ -154,6 +155,7 @@ class LDockTabArea(QWidget):
             return
         self._hidden_docks.discard(dock)
         self._tab_bar.setCurrentIndex(self._docks.index(dock))
+        self._sync_visibility()
 
     def set_vertical_tabs(self, vertical: bool) -> None:
         pos = QTabWidget.TabPosition.West if vertical else QTabWidget.TabPosition.South

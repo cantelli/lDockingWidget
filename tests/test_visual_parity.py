@@ -197,6 +197,8 @@ def _make_l_tabbed_window(count: int = 2):
         dock.setWidget(QLabel(title))
         mw.addDockWidget(LeftDockWidgetArea, dock)
         docks.append(dock)
+    for dock in docks[1:]:
+        mw.tabifyDockWidget(docks[0], dock)
     return mw, docks
 
 

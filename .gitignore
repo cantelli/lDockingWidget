@@ -10,6 +10,8 @@ dist/
 .claude/
 .vscode/
 .idea/
+third_party/
+tools/dock_benchmarks/artifacts/
 
 # OS
 .DS_Store

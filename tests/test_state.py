@@ -57,6 +57,7 @@ def test_save_restore_basic(qapp):
     dc = _make_dock("dc")
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
+    win.tabifyDockWidget(da, db)
     win.addDockWidget(RightDockWidgetArea, dc)
 
     state = win.saveState()
@@ -84,6 +85,8 @@ def test_save_restore_tab_order(qapp):
     docks = [_make_dock(f"d{i}") for i in range(4)]
     for d in docks:
         win.addDockWidget(LeftDockWidgetArea, d)
+    for dock in docks[1:]:
+        win.tabifyDockWidget(docks[0], dock)
 
     state = win.saveState()
 
@@ -183,6 +186,8 @@ def test_save_restore_tab_order_after_tab_move(qapp):
     docks = [_make_dock(name) for name in ("a", "b", "c")]
     for dock in docks:
         win.addDockWidget(LeftDockWidgetArea, dock)
+    for dock in docks[1:]:
+        win.tabifyDockWidget(docks[0], dock)
 
     tab_area = win._dock_areas[LeftDockWidgetArea]._tab_area
     tab_area._on_tab_moved(2, 0)
@@ -203,6 +208,8 @@ def test_save_restore_current_tab_selection(qapp):
     docks = [_make_dock(name) for name in ("a", "b", "c")]
     for dock in docks:
         win.addDockWidget(LeftDockWidgetArea, dock)
+    for dock in docks[1:]:
+        win.tabifyDockWidget(docks[0], dock)
 
     area = win._dock_areas[LeftDockWidgetArea]
     area.set_current_tab_dock(docks[1])
@@ -223,6 +230,7 @@ def test_save_restore_tabified_docks_keep_non_current_visible(qapp):
     second = _make_dock("second")
     source.addDockWidget(LeftDockWidgetArea, first)
     source.addDockWidget(LeftDockWidgetArea, second)
+    source.tabifyDockWidget(first, second)
     source._dock_areas[LeftDockWidgetArea].set_current_tab_dock(first)
     state = source.saveState()
 
@@ -238,6 +246,36 @@ def test_save_restore_tabified_docks_keep_non_current_visible(qapp):
     assert win._dock_areas[LeftDockWidgetArea].current_tab_dock() is first_live
     assert first_live.isVisible()
     assert second_live.isVisible()
+
+
+def test_save_restore_hidden_dock_visibility(qapp):
+    """restoreState preserves docks hidden through toggleViewAction or show/hide flows."""
+    source = LMainWindow()
+    visible = _make_dock("visible")
+    hidden = _make_dock("hidden")
+    source.addDockWidget(LeftDockWidgetArea, visible)
+    source.addDockWidget(RightDockWidgetArea, hidden)
+    source.show()
+    qapp.processEvents()
+
+    hidden.toggleViewAction().trigger()
+    qapp.processEvents()
+    assert not hidden.isVisible()
+
+    state = source.saveState()
+
+    restored = LMainWindow()
+    visible_live = _make_dock("visible")
+    hidden_live = _make_dock("hidden")
+    restored.addDockWidget(TopDockWidgetArea, visible_live)
+    restored.addDockWidget(TopDockWidgetArea, hidden_live)
+    restored.show()
+    qapp.processEvents()
+
+    assert restored.restoreState(state) is True
+    qapp.processEvents()
+    assert visible_live.isVisible()
+    assert not hidden_live.isVisible()
 
 
 def test_save_state_uses_live_layout_membership(qapp):
@@ -345,6 +383,7 @@ def test_content_tree_leaf_state_tracks_docked_mutations(qapp):
     db = _make_dock("db")
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
+    win.tabifyDockWidget(da, db)
 
     leaf = win._leaf_for_key("left")
 
@@ -504,6 +543,7 @@ def test_restore_dock_widget_late_tabbed_restore(qapp):
     second = _make_dock("second")
     source.addDockWidget(LeftDockWidgetArea, first)
     source.addDockWidget(LeftDockWidgetArea, second)
+    source.tabifyDockWidget(first, second)
     state = source.saveState()
 
     win = LMainWindow()
@@ -524,6 +564,7 @@ def test_restore_dock_widget_matches_direct_tab_insert_state(qapp):
     second = _make_dock("second")
     source.addDockWidget(LeftDockWidgetArea, first)
     source.addDockWidget(LeftDockWidgetArea, second)
+    source.tabifyDockWidget(first, second)
     state = source.saveState()
 
     restored = LMainWindow()
@@ -538,6 +579,7 @@ def test_restore_dock_widget_matches_direct_tab_insert_state(qapp):
     direct_second = _make_dock("second")
     direct.addDockWidget(LeftDockWidgetArea, direct_first)
     direct.addDockWidget(LeftDockWidgetArea, direct_second)
+    direct.tabifyDockWidget(direct_first, direct_second)
 
     restored_leaf = restored._leaf_for_key("left")
     direct_leaf = direct._leaf_for_key("left")
@@ -555,6 +597,7 @@ def test_restore_dock_widget_uses_saved_nested_target_when_available(qapp):
     nested = _make_dock("nested")
     source.addDockWidget(RightDockWidgetArea, anchor)
     source.addDockWidget(RightDockWidgetArea, sibling)
+    source.tabifyDockWidget(anchor, sibling)
     source._drop_docks(
         RightDockWidgetArea,
         [nested],
@@ -570,6 +613,7 @@ def test_restore_dock_widget_uses_saved_nested_target_when_available(qapp):
     sibling_live = _make_dock("sibling")
     win.addDockWidget(LeftDockWidgetArea, anchor_live)
     win.addDockWidget(TopDockWidgetArea, sibling_live)
+    win.tabifyDockWidget(anchor_live, sibling_live)
 
     assert win.restoreState(state) is True
     nested_live = _make_dock("nested")

@@ -107,6 +107,7 @@ class LDockWidget(QWidget):
         self._float_drag_offset = QPoint()
         self._tabbed_visibility_override: bool | None = None
         self._tab_visibility_sync = False
+        self._explicitly_hidden = False
 
         # Resize drag state
         self._resize_dir = 0
@@ -201,7 +202,7 @@ class LDockWidget(QWidget):
         if self._toggle_action is None:
             self._toggle_action = QAction(self._title, self)
             self._toggle_action.setCheckable(True)
-            self._toggle_action.setChecked(self.isVisible())
+            self._toggle_action.setChecked(self._toggle_action_checked_value())
             self._toggle_action.toggled.connect(self.setVisible)
         return self._toggle_action
 
@@ -253,6 +254,8 @@ class LDockWidget(QWidget):
             )
             self._pre_float_area_side = self._current_area._area_side
             self._current_area.remove_dock(self)
+            if self._main_window is not None:
+                self._main_window._sync_content_tree_to_areas()
 
         self.setParent(None)
         flags = (
@@ -394,12 +397,15 @@ class LDockWidget(QWidget):
     def _sync_toggle_action_checked(self) -> None:
         if self._toggle_action is None:
             return
-        checked = self.isVisible()
+        checked = self._toggle_action_checked_value()
         if self._toggle_action.isChecked() == checked:
             return
         was_blocked = self._toggle_action.blockSignals(True)
         self._toggle_action.setChecked(checked)
         self._toggle_action.blockSignals(was_blocked)
+
+    def _toggle_action_checked_value(self) -> bool:
+        return not self._explicitly_hidden
 
     def setVisible(self, visible: bool) -> None:
         if self._tab_visibility_sync:
@@ -407,6 +413,7 @@ class LDockWidget(QWidget):
             if not visible:
                 self._reset_interaction_state()
             return
+        self._explicitly_hidden = not visible
         if (
             self._current_area is not None
             and self._current_area.handle_tabified_visibility_request(self, visible)
@@ -425,6 +432,14 @@ class LDockWidget(QWidget):
         if previous_visible != self.isVisible():
             self._sync_toggle_action_checked()
         self.visibilityChanged.emit(visible)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_toggle_action_checked()
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._sync_toggle_action_checked()
 
     # ------------------------------------------------------------------
     # Mouse events for border-resize when floating
