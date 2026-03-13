@@ -12,6 +12,8 @@ from ldocking import (
     LDockWidget,
     LDragManager,
     LMainWindow,
+    AllowNestedDocks,
+    GroupedDragging,
     LeftDockWidgetArea,
     RightDockWidgetArea,
     TopDockWidgetArea,
@@ -30,6 +32,16 @@ def _dock(name: str) -> LDockWidget:
     d.setObjectName(name)
     d.setWidget(QLabel(name))
     return d
+
+
+def _tree_shape(node) -> tuple:
+    if hasattr(node, "widget") and hasattr(node, "key"):
+        return ("leaf", node.key)
+    return (
+        "split",
+        int(node.orientation.value),
+        tuple(_tree_shape(child) for child in node.children),
+    )
 
 
 # ------------------------------------------------------------------
@@ -304,6 +316,7 @@ def test_drag_manager_classifies_area_center_as_tab_target(qapp):
     assert target is not None
     assert target.area_side == LeftDockWidgetArea
     assert target.mode == "tab"
+    assert target.target_id == "d"
     win.hide()
 
 
@@ -324,6 +337,154 @@ def test_drag_manager_classifies_window_edge_as_side_target(qapp):
     assert target.area_side == LeftDockWidgetArea
     assert target.mode == "side"
     win.hide()
+
+
+def test_drag_manager_classifies_central_edge_as_area_target(qapp):
+    """Dragging over a central-widget edge yields a root-tree area target."""
+    win = LMainWindow()
+    win.resize(900, 700)
+    win.setCentralWidget(QLabel("central"))
+    win.show()
+    dock = _dock("d")
+    qapp.processEvents()
+
+    dm = LDragManager.instance()
+    dm._dock = dock
+    central = win.centralWidget()
+    local = central.rect().center()
+    local.setX(5)
+    target = dm._classify_drop_zone(win, central.mapToGlobal(local), win.mapFromGlobal(central.mapToGlobal(local)))
+
+    assert target is not None
+    assert target.area_side == LeftDockWidgetArea
+    assert target.mode == "area"
+    assert target.target_key == "central"
+    win.hide()
+
+
+def test_allow_nested_docks_creates_nested_split(qapp):
+    """AllowNestedDocks enables relative splits inside an occupied dock area."""
+    win = LMainWindow()
+    win.setDockOptions(AllowNestedDocks | ForceTabbedDocks)
+    da = _dock("da")
+    db = _dock("db")
+    dc = _dock("dc")
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+
+    area = win._dock_areas[LeftDockWidgetArea]
+    area.split_docks(da, [dc], RightDockWidgetArea)
+
+    assert area._split_area is not None
+    assert dc in area.all_docks()
+
+
+def test_grouped_dragging_uses_full_tab_payload(qapp):
+    """GroupedDragging tears off the whole tab group rather than one dock."""
+    win = LMainWindow()
+    win.setDockOptions(ForceTabbedDocks | GroupedDragging)
+    da = _dock("da")
+    db = _dock("db")
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+
+    payload = win._dock_areas[LeftDockWidgetArea].docks_for_group_drag(da)
+
+    assert payload == [da, db]
+
+
+def test_grouped_dragging_drop_preserves_current_tab(qapp):
+    """Dropping a grouped tab payload keeps the selected tab in the moved group."""
+    win = LMainWindow()
+    win.setDockOptions(ForceTabbedDocks | GroupedDragging)
+    da = _dock("da")
+    db = _dock("db")
+    target = _dock("target")
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+    win.addDockWidget(RightDockWidgetArea, target)
+
+    source_area = win._dock_areas[LeftDockWidgetArea]
+    source_area.set_current_tab_dock(db)
+    payload = source_area.docks_for_group_drag(db)
+
+    win._drop_docks(RightDockWidgetArea, payload, mode="side", target_dock=target, side=BottomDockWidgetArea)
+
+    right_area = win._dock_areas[RightDockWidgetArea]
+    assert [dock.windowTitle() for dock in right_area.all_docks()] == ["target", "da", "db"]
+    assert right_area.current_tab_dock() is db
+
+
+def test_drop_docks_accepts_target_id_without_target_widget(qapp):
+    """Tree-driven drop accepts a stable target id without a live target widget object."""
+    win = LMainWindow()
+    win.setDockOptions(AllowNestedDocks | ForceTabbedDocks)
+    anchor = _dock("anchor")
+    moved = _dock("moved")
+    win.addDockWidget(RightDockWidgetArea, anchor)
+
+    win._drop_docks(
+        RightDockWidgetArea,
+        [moved],
+        mode="side",
+        target_id="anchor",
+        side=BottomDockWidgetArea,
+    )
+
+    right_leaf = win._leaf_for_key("right")
+    assert right_leaf is not None
+    assert right_leaf.area_state["type"] == "split"
+    assert [dock.windowTitle() for dock in win._dock_areas[RightDockWidgetArea].all_docks()] == ["anchor", "moved"]
+
+
+def test_root_tree_grows_around_central_widget(qapp):
+    """Top-level content tree inserts area leaves relative to the central leaf."""
+    win = LMainWindow()
+    left = _dock("left")
+    top = _dock("top")
+    right = _dock("right")
+
+    win.addDockWidget(LeftDockWidgetArea, left)
+    win.addDockWidget(TopDockWidgetArea, top)
+    win.addDockWidget(RightDockWidgetArea, right)
+
+    assert _tree_shape(win._content_tree) == (
+        "split",
+        int(Qt.Orientation.Horizontal.value),
+        (
+            ("leaf", "left"),
+            (
+                "split",
+                int(Qt.Orientation.Vertical.value),
+                (
+                    ("leaf", "top"),
+                    ("leaf", "central"),
+                ),
+            ),
+            ("leaf", "right"),
+        ),
+    )
+
+
+def test_root_tree_prunes_empty_area_leaves(qapp):
+    """Removing the last dock from a side collapses that area out of the root tree."""
+    win = LMainWindow()
+    left = _dock("left")
+    top = _dock("top")
+
+    win.addDockWidget(LeftDockWidgetArea, left)
+    win.addDockWidget(TopDockWidgetArea, top)
+    win.removeDockWidget(left)
+
+    assert win._leaf_for_key("left") is None
+    assert _tree_shape(win._content_tree) == (
+        "split",
+        int(Qt.Orientation.Vertical.value),
+        (
+            ("leaf", "top"),
+            ("leaf", "central"),
+        ),
+    )
 
 
 # ------------------------------------------------------------------
@@ -412,6 +573,17 @@ def test_dock_widget_area_unknown_returns_none(qapp):
     win = LMainWindow()
     dock = _dock("d")
     assert win.dockWidgetArea(dock) == Qt.DockWidgetArea.NoDockWidgetArea
+
+
+def test_dock_widget_area_derives_from_live_layout_not_cache(qapp):
+    """dockWidgetArea follows the live area contents even if the cache is stale."""
+    win = LMainWindow()
+    dock = _dock("d")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+
+    win._dock_map[dock] = RightDockWidgetArea
+
+    assert win.dockWidgetArea(dock) == LeftDockWidgetArea
 
 
 def test_add_dock_widget_falls_back_to_first_allowed_area(qapp):

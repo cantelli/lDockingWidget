@@ -20,6 +20,9 @@ Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses th
 - `toggleViewAction()` restores hidden docks without losing floating state, and re-selects a dock when it is shown inside a tab group.
 - Drag/drop now distinguishes side-dock targets from center tab-drop targets within visible dock areas.
 - `ForceTabbedDocks` is honored for same-area additions within the current splitter-based layout model.
+- `AllowNestedDocks` now enables nested relative splits inside a top-level dock side instead of flattening all additions into one strip.
+- `GroupedDragging` now drags an entire tab group together when a tab from that group is torn off.
+- The top-level docked layout is now persisted as a root content tree around the central widget; `area_trees` remain restore-only fallback for older saved states.
 - `saveState(version)` persists the caller-provided version number, and `restoreState(state, version)` requires the same version to succeed.
 - Toolbar breaks and `setCorner()` remain intentional no-ops because the splitter layout has a fixed structure.
 
@@ -88,15 +91,14 @@ app.exec()
 LMainWindow (QVBoxLayout)
 ├── MenuBar          (optional)
 ├── ToolBars         (optional, stacked vertically)
-├── outer_splitter   (Horizontal)
-│   ├── left_area    (LDockArea)
-│   ├── inner_splitter (Vertical)
-│   │   ├── top_area      (LDockArea)
-│   │   ├── central_widget
-│   │   └── bottom_area   (LDockArea)
-│   └── right_area   (LDockArea)
+├── content_tree     (recursive split tree)
+│   ├── dock side leaf / nested split
+│   ├── central_widget
+│   └── dock side leaf / nested split
 └── StatusBar
 ```
+
+The root content tree is the authoritative top-level docking layout. Compatibility `outer_splitter`, `inner_splitter`, and side `LDockArea` widgets are rebuilt from that tree so existing APIs, tests, and stylesheet selectors still work.
 
 ### Classes
 

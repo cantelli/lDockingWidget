@@ -1,11 +1,4 @@
-"""LDragManager - singleton drag state machine + global event filter.
-
-Lifecycle:
-  1. LTitleBar.drag_started -> LDragManager.begin_drag(dock, global_pos)
-  2. Global event filter: mouseMoveEvent -> move dock + show LDropIndicator
-  3. Global event filter: mouseReleaseEvent -> drop or keep floating
-  4. Key Escape -> cancel drag, restore dock to origin
-"""
+"""LDragManager - singleton drag state machine + global event filter."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,7 +23,11 @@ _AREA_CENTER_FRACTION = 0.55
 class _DropTarget:
     main_window: LMainWindow
     area_side: object
-    mode: str  # "side" | "tab"
+    mode: str  # "side" | "tab" | "area"
+    target_dock: LDockWidget | None = None
+    target_id: str | None = None
+    target_key: str | None = None
+    relative_side: object | None = None
 
 
 class LDragManager(QObject):
@@ -47,6 +44,7 @@ class LDragManager(QObject):
     def __init__(self) -> None:
         super().__init__()
         self._dock: LDockWidget | None = None
+        self._payload: list[LDockWidget] = []
         self._origin_area: LDockArea | None = None
         self._origin_area_side = None
         self._origin_main_window = None
@@ -55,12 +53,19 @@ class LDragManager(QObject):
         self._indicator = LDropIndicator()
         self._drop_target: _DropTarget | None = None
 
-    def begin_drag(self, dock: LDockWidget, global_pos: QPoint) -> None:
-        """Start a drag operation for ``dock``."""
+    def begin_drag(
+        self,
+        dock: LDockWidget,
+        global_pos: QPoint,
+        payload: list[LDockWidget] | None = None,
+    ) -> None:
+        """Start a drag operation for ``dock`` or a grouped payload."""
         if self._active:
             return
 
+        payload = payload or [dock]
         self._dock = dock
+        self._payload = list(payload)
         self._origin_area = dock._current_area
         self._origin_area_side = (
             dock._current_area._area_side if dock._current_area else None
@@ -68,9 +73,8 @@ class LDragManager(QObject):
         self._origin_main_window = dock._main_window
         if dock._current_area is not None:
             dock._pre_float_area_side = dock._current_area._area_side
-
-        if dock._current_area is not None:
-            dock._current_area.remove_dock(dock)
+            for payload_dock in list(self._payload):
+                dock._current_area.remove_dock(payload_dock)
 
         dock.setParent(None)
         flags = (
@@ -84,13 +88,16 @@ class LDragManager(QObject):
         dock.move(global_pos - self._drag_offset)
         dock.show()
         dock._floating = True
+        for payload_dock in self._payload:
+            payload_dock._floating = True
+            if payload_dock is not dock:
+                payload_dock.hide()
 
         self._active = True
         QApplication.instance().installEventFilter(self)
         QApplication.setOverrideCursor(Qt.CursorShape.ClosedHandCursor)
 
     def cancel_drag(self) -> None:
-        """Cancel the current drag, restoring dock to origin."""
         if not self._active or self._dock is None:
             return
         self._indicator.hide_indicator()
@@ -98,18 +105,23 @@ class LDragManager(QObject):
         QApplication.instance().removeEventFilter(self)
 
         dock = self._dock
+        payload = list(self._payload)
         mw = self._origin_main_window
         side = self._origin_area_side
         self._reset()
 
         if mw is not None and side is not None:
-            dock._floating = False
-            mw.addDockWidget(side, dock)
-            dock.topLevelChanged.emit(False)
+            mw._drop_docks(side, payload)
+            for payload_dock in payload:
+                payload_dock.topLevelChanged.emit(False)
         else:
-            dock._floating = True
-            dock.show()
-            dock.topLevelChanged.emit(True)
+            for payload_dock in payload:
+                payload_dock._floating = True
+                if payload_dock is dock:
+                    payload_dock.show()
+                else:
+                    payload_dock.hide()
+                payload_dock.topLevelChanged.emit(True)
 
     def eventFilter(self, obj: QObject, event) -> bool:
         if not self._active or self._dock is None:
@@ -121,17 +133,13 @@ class LDragManager(QObject):
         if etype == QEvent.Type.MouseMove:
             self._on_mouse_move(event.globalPosition().toPoint())
             return True
-
         if etype == QEvent.Type.MouseButtonRelease:
             if event.button() == Qt.MouseButton.LeftButton:
-                self._on_mouse_release(event.globalPosition().toPoint())
+                self._on_mouse_release()
                 return True
-
-        if etype == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Escape:
-                self.cancel_drag()
-                return True
-
+        if etype == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            self.cancel_drag()
+            return True
         return False
 
     def _on_mouse_move(self, global_pos: QPoint) -> None:
@@ -147,12 +155,13 @@ class LDragManager(QObject):
             self._drop_target = None
             self._indicator.hide_indicator()
 
-    def _on_mouse_release(self, global_pos: QPoint) -> None:
+    def _on_mouse_release(self) -> None:
         self._indicator.hide_indicator()
         QApplication.restoreOverrideCursor()
         QApplication.instance().removeEventFilter(self)
 
         dock = self._dock
+        payload = list(self._payload)
         drop = self._drop_target
         self._reset()
 
@@ -160,92 +169,174 @@ class LDragManager(QObject):
             return
 
         if drop is not None:
-            dock._floating = False
-            drop.main_window.addDockWidget(drop.area_side, dock)
-            if drop.mode == "tab":
-                drop.main_window._dock_areas[drop.area_side].set_current_tab_dock(dock)
-            dock.topLevelChanged.emit(False)
+            drop.main_window._drop_docks(
+                drop.area_side,
+                payload,
+                mode=drop.mode,
+                target_dock=drop.target_dock,
+                target_id=drop.target_id,
+                target_key=drop.target_key,
+                side=drop.relative_side,
+            )
+            for payload_dock in payload:
+                payload_dock.topLevelChanged.emit(False)
         else:
-            dock._floating = True
-            dock.topLevelChanged.emit(True)
+            for payload_dock in payload:
+                payload_dock._floating = True
+                if payload_dock is dock:
+                    payload_dock.show()
+                else:
+                    payload_dock.hide()
+                payload_dock.topLevelChanged.emit(True)
 
     def _find_drop_target(self, global_pos: QPoint) -> _DropTarget | None:
-        """Return the drop target for the given global position."""
         from .lmain_window import LMainWindow
 
         for widget in QApplication.topLevelWidgets():
             if isinstance(widget, LMainWindow) and widget.isVisible():
                 local = widget.mapFromGlobal(global_pos)
                 if widget.rect().contains(local):
-                    target = self._classify_drop_zone(widget, local)
+                    target = self._classify_drop_zone(widget, global_pos, local)
                     if target is None or self._dock is None:
                         return target
-                    resolved_area = widget._resolve_dock_area(
-                        self._dock, target.area_side
-                    )
+                    resolved_area = widget._resolve_dock_area(self._dock, target.area_side)
                     if resolved_area is None:
                         return None
-                    return _DropTarget(widget, resolved_area, target.mode)
+                    return _DropTarget(
+                        widget,
+                        resolved_area,
+                        target.mode,
+                        target.target_dock,
+                        target.target_id,
+                        target.target_key,
+                        target.relative_side,
+                    )
         return None
 
     def _classify_drop_zone(
-        self, mw: LMainWindow, local: QPoint
+        self, mw: LMainWindow, global_or_local: QPoint, local: QPoint | None = None
     ) -> _DropTarget | None:
-        """Return the hovered drop target, or None."""
         from PySide6.QtCore import Qt as _Qt
 
+        if local is None:
+            local = global_or_local
+            global_pos = mw.mapToGlobal(local)
+        else:
+            global_pos = global_or_local
+
         for area in mw._dock_areas.values():
-            if area.isVisible():
-                area_local = area.mapFromGlobal(mw.mapToGlobal(local))
-                if not area.rect().contains(area_local):
-                    continue
-                if self._dock is not None and not self._dock.isAreaAllowed(area._area_side):
-                    return None
-                if self._compute_area_tab_rect(area).contains(area_local):
-                    return _DropTarget(mw, area._area_side, "tab")
-                return _DropTarget(mw, area._area_side, "side")
+            if not area.isVisible():
+                continue
+            area_local = area.mapFromGlobal(global_pos)
+            if not area.rect().contains(area_local):
+                continue
+            if self._dock is not None and not self._dock.isAreaAllowed(area._area_side):
+                return None
+
+            target_dock = self._dock_at_position(area, global_pos)
+            if target_dock is not None:
+                dock_local = target_dock.mapFromGlobal(global_pos)
+                center_rect = QRect(
+                    target_dock.width() // 4,
+                    target_dock.height() // 4,
+                    target_dock.width() // 2,
+                    target_dock.height() // 2,
+                )
+                if center_rect.contains(dock_local):
+                    return _DropTarget(
+                        mw,
+                        area._area_side,
+                        "tab",
+                        target_dock=target_dock,
+                        target_id=mw._dock_id(target_dock),
+                    )
+                return _DropTarget(
+                    mw,
+                    area._area_side,
+                    "side",
+                    target_dock=target_dock,
+                    target_id=mw._dock_id(target_dock),
+                    relative_side=self._relative_side(target_dock.rect(), dock_local),
+                )
+
+            if self._compute_area_tab_rect(area).contains(area_local):
+                return _DropTarget(mw, area._area_side, "tab")
+            return _DropTarget(mw, area._area_side, "area")
+
+        central = mw.centralWidget() or getattr(mw, "_central_placeholder", None)
+        if central is not None and central.isVisible():
+            central_local = central.mapFromGlobal(global_pos)
+            if central.rect().contains(central_local):
+                rect = central.rect()
+                edge = self._relative_side(rect, central_local)
+                return _DropTarget(mw, edge, "area", target_key="central")
 
         w = mw.width()
         h = mw.height()
         x, y = local.x(), local.y()
         f = _EDGE_FRACTION
-
         if x < w * f:
-            return _DropTarget(mw, _Qt.DockWidgetArea.LeftDockWidgetArea, "side")
+            return _DropTarget(mw, _Qt.DockWidgetArea.LeftDockWidgetArea, "area")
         if x > w * (1 - f):
-            return _DropTarget(mw, _Qt.DockWidgetArea.RightDockWidgetArea, "side")
+            return _DropTarget(mw, _Qt.DockWidgetArea.RightDockWidgetArea, "area")
         if y < h * f:
-            return _DropTarget(mw, _Qt.DockWidgetArea.TopDockWidgetArea, "side")
+            return _DropTarget(mw, _Qt.DockWidgetArea.TopDockWidgetArea, "area")
         if y > h * (1 - f):
-            return _DropTarget(mw, _Qt.DockWidgetArea.BottomDockWidgetArea, "side")
-
+            return _DropTarget(mw, _Qt.DockWidgetArea.BottomDockWidgetArea, "area")
         return None
 
     def _compute_indicator_rect(self, target: _DropTarget) -> QRect:
         from PySide6.QtCore import Qt as _Qt
 
         mw = target.main_window
-        area_side = target.area_side
+        if target.mode == "tab":
+            if target.target_dock is not None:
+                dock_rect = QRect(
+                    target.target_dock.mapToGlobal(target.target_dock.rect().topLeft()),
+                    target.target_dock.size(),
+                )
+                width = max(48, int(dock_rect.width() * _AREA_CENTER_FRACTION))
+                height = max(32, int(dock_rect.height() * _AREA_CENTER_FRACTION))
+                rect = QRect(0, 0, width, height)
+                rect.moveCenter(dock_rect.center())
+                return rect
+            area = mw._dock_areas[target.area_side]
+            local_rect = self._compute_area_tab_rect(area)
+            return QRect(area.mapToGlobal(local_rect.topLeft()), local_rect.size())
+
+        if (
+            target.mode == "side"
+            and target.target_dock is not None
+            and target.relative_side is not None
+        ):
+            dock_rect = QRect(
+                target.target_dock.mapToGlobal(target.target_dock.rect().topLeft()),
+                target.target_dock.size(),
+            )
+            if target.relative_side == _Qt.DockWidgetArea.LeftDockWidgetArea:
+                width = max(24, dock_rect.width() // 3)
+                return QRect(dock_rect.left(), dock_rect.top(), width, dock_rect.height())
+            if target.relative_side == _Qt.DockWidgetArea.RightDockWidgetArea:
+                width = max(24, dock_rect.width() // 3)
+                return QRect(dock_rect.right() - width, dock_rect.top(), width, dock_rect.height())
+            if target.relative_side == _Qt.DockWidgetArea.TopDockWidgetArea:
+                height = max(24, dock_rect.height() // 3)
+                return QRect(dock_rect.left(), dock_rect.top(), dock_rect.width(), height)
+            height = max(24, dock_rect.height() // 3)
+            return QRect(dock_rect.left(), dock_rect.bottom() - height, dock_rect.width(), height)
+
         tl = mw.mapToGlobal(mw.rect().topLeft())
         mw_global = QRect(tl, mw.size())
         w, h = mw_global.width(), mw_global.height()
         f = _EDGE_FRACTION
-
-        if target.mode == "tab":
-            area = mw._dock_areas[area_side]
-            local_rect = self._compute_area_tab_rect(area)
-            global_top_left = area.mapToGlobal(local_rect.topLeft())
-            return QRect(global_top_left, local_rect.size())
-
-        if area_side == _Qt.DockWidgetArea.LeftDockWidgetArea:
+        if target.area_side == _Qt.DockWidgetArea.LeftDockWidgetArea:
             return QRect(mw_global.left(), mw_global.top(), int(w * f), h)
-        if area_side == _Qt.DockWidgetArea.RightDockWidgetArea:
+        if target.area_side == _Qt.DockWidgetArea.RightDockWidgetArea:
             return QRect(mw_global.right() - int(w * f), mw_global.top(), int(w * f), h)
-        if area_side == _Qt.DockWidgetArea.TopDockWidgetArea:
+        if target.area_side == _Qt.DockWidgetArea.TopDockWidgetArea:
             return QRect(mw_global.left(), mw_global.top(), w, int(h * f))
-        if area_side == _Qt.DockWidgetArea.BottomDockWidgetArea:
+        if target.area_side == _Qt.DockWidgetArea.BottomDockWidgetArea:
             return QRect(mw_global.left(), mw_global.bottom() - int(h * f), w, int(h * f))
-
         return mw_global
 
     def _compute_area_tab_rect(self, area: LDockArea) -> QRect:
@@ -256,8 +347,33 @@ class LDragManager(QObject):
         tab_rect.moveCenter(rect.center())
         return tab_rect
 
+    def _dock_at_position(self, area: LDockArea, global_pos: QPoint) -> LDockWidget | None:
+        for dock in reversed(area.all_docks()):
+            if dock.isVisible():
+                local = dock.mapFromGlobal(global_pos)
+                if dock.rect().contains(local):
+                    return dock
+        return None
+
+    def _relative_side(self, rect: QRect, point: QPoint):
+        from PySide6.QtCore import Qt as _Qt
+
+        left = point.x()
+        right = rect.width() - point.x()
+        top = point.y()
+        bottom = rect.height() - point.y()
+        smallest = min(left, right, top, bottom)
+        if smallest == left:
+            return _Qt.DockWidgetArea.LeftDockWidgetArea
+        if smallest == right:
+            return _Qt.DockWidgetArea.RightDockWidgetArea
+        if smallest == top:
+            return _Qt.DockWidgetArea.TopDockWidgetArea
+        return _Qt.DockWidgetArea.BottomDockWidgetArea
+
     def _reset(self) -> None:
         self._dock = None
+        self._payload = []
         self._origin_area = None
         self._origin_area_side = None
         self._origin_main_window = None

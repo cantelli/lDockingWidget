@@ -191,3 +191,54 @@ def test_save_restore_current_tab_selection(qapp):
 
     assert win.restoreState(state) is True
     assert area.current_tab_dock() is docks[1]
+
+
+def test_save_state_uses_live_layout_membership(qapp):
+    """saveState serializes actual area membership even if the cache is stale."""
+    win = LMainWindow()
+    dock = _make_dock("da")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+
+    win._dock_map[dock] = RightDockWidgetArea
+
+    payload = json.loads(bytes(win.saveState()).decode())
+
+    assert payload["docks"][0]["area"] == LeftDockWidgetArea.value
+
+
+def test_restore_prefers_content_tree_area_state_over_area_trees(qapp):
+    """restoreState uses embedded content_tree area state even if area_trees is wrong."""
+    win = LMainWindow()
+    da = _make_dock("da")
+    db = _make_dock("db")
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(RightDockWidgetArea, db)
+
+    payload = json.loads(bytes(win.saveState()).decode())
+    payload["area_trees"] = {
+        str(LeftDockWidgetArea.value): None,
+        str(RightDockWidgetArea.value): None,
+        str(TopDockWidgetArea.value): None,
+        str(BottomDockWidgetArea.value): None,
+    }
+    state = QByteArray(json.dumps(payload).encode())
+
+    win.addDockWidget(LeftDockWidgetArea, db)
+    assert win.restoreState(state) is True
+    assert win.dockWidgetArea(da) == LeftDockWidgetArea
+    assert win.dockWidgetArea(db) == RightDockWidgetArea
+
+
+def test_content_tree_leaf_state_tracks_docked_mutations(qapp):
+    """Docked mutations update the in-memory content_tree leaf area state."""
+    win = LMainWindow()
+    da = _make_dock("da")
+    db = _make_dock("db")
+    win.addDockWidget(LeftDockWidgetArea, da)
+    win.addDockWidget(LeftDockWidgetArea, db)
+
+    leaf = win._leaf_for_key("left")
+
+    assert leaf is not None
+    assert leaf.area_state["type"] == "tabs"
+    assert [child["id"] for child in leaf.area_state["children"]] == ["da", "db"]
