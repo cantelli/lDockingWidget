@@ -216,6 +216,30 @@ def test_save_restore_current_tab_selection(qapp):
     assert area.current_tab_dock() is docks[1]
 
 
+def test_save_restore_tabified_docks_keep_non_current_visible(qapp):
+    """Restored tab groups keep non-current docks visible like native Qt."""
+    source = LMainWindow()
+    first = _make_dock("first")
+    second = _make_dock("second")
+    source.addDockWidget(LeftDockWidgetArea, first)
+    source.addDockWidget(LeftDockWidgetArea, second)
+    source._dock_areas[LeftDockWidgetArea].set_current_tab_dock(first)
+    state = source.saveState()
+
+    win = LMainWindow()
+    first_live = _make_dock("first")
+    second_live = _make_dock("second")
+    win.addDockWidget(RightDockWidgetArea, first_live)
+    win.addDockWidget(TopDockWidgetArea, second_live)
+    win.show()
+    assert win.restoreState(state) is True
+    qapp.processEvents()
+
+    assert win._dock_areas[LeftDockWidgetArea].current_tab_dock() is first_live
+    assert first_live.isVisible()
+    assert second_live.isVisible()
+
+
 def test_save_state_uses_live_layout_membership(qapp):
     """saveState serializes actual area membership even if the cache is stale."""
     win = LMainWindow()
@@ -615,9 +639,13 @@ def test_restore_state_accepts_native_qt_save_state_for_docks(qapp):
         win.addDockWidget(TopDockWidgetArea, dock)
 
     assert win.restoreState(state) is True
+    win.show()
+    qapp.processEvents()
     assert win.dockWidgetArea(first_live) == LeftDockWidgetArea
     assert win.dockWidgetArea(second_live) == LeftDockWidgetArea
     assert second_live in win.tabifiedDockWidgets(first_live)
+    assert first_live.isVisible()
+    assert second_live.isVisible()
     assert win.dockWidgetArea(right_live) == RightDockWidgetArea
     assert floating_live.isFloating()
     geometry = floating_live.geometry()

@@ -409,6 +409,12 @@ SCENARIOS = [
         ],
         "check": ["tabs"],
     },
+    {
+        "name": "tabified_visible_pair",
+        "setup": [("A", Left), ("B", Left)],
+        "actions": [],
+        "check": ["visible"],
+    },
 
     # 10 ── three docks tabified on Left ──────────────────────────────────────
     {

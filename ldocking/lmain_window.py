@@ -571,6 +571,9 @@ class LMainWindow(QWidget):
         return all(dock.isAreaAllowed(area) for dock in docks)
 
     def _area_state(self, area: Qt.DockWidgetArea) -> object | None:
+        area_obj = self._dock_areas.get(area)
+        if area_obj is not None and area_obj.all_docks():
+            return area_obj.export_state()
         leaf = self._leaf_for_area(area)
         return leaf.area_state if leaf is not None else None
 

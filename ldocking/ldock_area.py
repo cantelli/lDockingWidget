@@ -129,6 +129,16 @@ class LDockArea(QWidget):
     def all_docks(self) -> list[LDockWidget]:
         return list(self._docks)
 
+    def handle_tabified_visibility_request(self, dock: LDockWidget, visible: bool) -> bool:
+        node = self._dock_to_node.get(dock)
+        if not isinstance(node, _TabNode):
+            return False
+        tab_area = self._node_tab_areas.get(id(node))
+        if tab_area is None:
+            return False
+        tab_area.handle_dock_visibility_request(dock, visible)
+        return True
+
     def tabified_docks(self, dock: LDockWidget) -> list[LDockWidget]:
         node = self._dock_to_node.get(dock)
         if isinstance(node, _TabNode):
@@ -276,8 +286,8 @@ class LDockArea(QWidget):
         current = 0
         anchor = docks[0]
         source = self._dock_to_node.get(anchor)
-        if isinstance(source, _TabNode) and anchor in source.docks:
-            current = source.docks.index(anchor)
+        if isinstance(source, _TabNode):
+            current = min(source.current_index, len(docks) - 1)
         return _TabNode(list(docks), current)
 
     def _rebuild(self) -> None:
@@ -308,6 +318,7 @@ class LDockArea(QWidget):
             dock = node.dock
             self._dock_to_node[dock] = node
             dock._current_area = self
+            dock._set_tabbed_visibility_override(None)
             dock.setParent(parent)
             dock._title_bar.show()
             dock.show()
@@ -317,15 +328,17 @@ class LDockArea(QWidget):
             tab_area = LDockTabArea(parent, vertical_tabs=self._vertical_tabs_opt)
             tab_area.set_tab_position(self._tab_position_opt)
             tab_area.set_grouped_dragging(self._grouped_dragging)
+            desired_current_index = min(node.current_index, len(node.docks) - 1) if node.docks else 0
             for dock in node.docks:
                 self._dock_to_node[dock] = node
                 dock._current_area = self
                 tab_area.add_dock(dock)
-            if node.docks:
-                tab_area.set_current_dock(node.docks[node.current_index])
             tab_area.currentDockChanged.connect(
                 lambda dock, n=node: self._on_tab_current_changed(n, dock)
             )
+            if node.docks:
+                tab_area.set_current_dock(node.docks[desired_current_index])
+                node.current_index = desired_current_index
             self._node_tab_areas[id(node)] = tab_area
             if self._root is node:
                 self._tab_area = tab_area

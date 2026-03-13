@@ -105,6 +105,8 @@ class LDockWidget(QWidget):
         self._size_grip: QSizeGrip | None = None
         self._float_moving = False
         self._float_drag_offset = QPoint()
+        self._tabbed_visibility_override: bool | None = None
+        self._tab_visibility_sync = False
 
         # Resize drag state
         self._resize_dir = 0
@@ -170,6 +172,11 @@ class LDockWidget(QWidget):
     def isFloating(self) -> bool:
         return self._floating
 
+    def isVisible(self) -> bool:  # type: ignore[override]
+        if self._tabbed_visibility_override is not None:
+            return self._tabbed_visibility_override
+        return super().isVisible()
+
     def setFloating(self, floating: bool) -> None:
         if floating == self._floating:
             return
@@ -196,8 +203,15 @@ class LDockWidget(QWidget):
             self._toggle_action.setCheckable(True)
             self._toggle_action.setChecked(self.isVisible())
             self._toggle_action.toggled.connect(self.setVisible)
-            self.visibilityChanged.connect(self._toggle_action.setChecked)
         return self._toggle_action
+
+    def close(self) -> bool:  # type: ignore[override]
+        if (
+            self._current_area is not None
+            and self._current_area.handle_tabified_visibility_request(self, False)
+        ):
+            return True
+        return super().close()
 
     # ------------------------------------------------------------------
     # Internal: float / dock transitions
@@ -373,12 +387,43 @@ class LDockWidget(QWidget):
     # Visibility
     # ------------------------------------------------------------------
 
+    def _set_tabbed_visibility_override(self, visible: bool | None) -> None:
+        self._tabbed_visibility_override = visible
+        self._sync_toggle_action_checked()
+
+    def _sync_toggle_action_checked(self) -> None:
+        if self._toggle_action is None:
+            return
+        checked = self.isVisible()
+        if self._toggle_action.isChecked() == checked:
+            return
+        was_blocked = self._toggle_action.blockSignals(True)
+        self._toggle_action.setChecked(checked)
+        self._toggle_action.blockSignals(was_blocked)
+
     def setVisible(self, visible: bool) -> None:
+        if self._tab_visibility_sync:
+            super().setVisible(visible)
+            if not visible:
+                self._reset_interaction_state()
+            return
+        if (
+            self._current_area is not None
+            and self._current_area.handle_tabified_visibility_request(self, visible)
+        ):
+            return
+        previous_visible = self.isVisible()
         super().setVisible(visible)
-        if visible and self._current_area is not None:
+        if (
+            visible
+            and self._current_area is not None
+            and self._tabbed_visibility_override is None
+        ):
             self._current_area.set_current_tab_dock(self)
         if not visible:
             self._reset_interaction_state()
+        if previous_visible != self.isVisible():
+            self._sync_toggle_action_checked()
         self.visibilityChanged.emit(visible)
 
     # ------------------------------------------------------------------

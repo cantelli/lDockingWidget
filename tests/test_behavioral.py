@@ -9,6 +9,7 @@ from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel
 
+import ldocking.monkey as monkey
 from ldocking import (
     LDockWidget,
     LDragManager,
@@ -29,9 +30,19 @@ from ldocking import (
 )
 from ldocking.ldrag_manager import _DropTarget
 
+NativeQDockWidget = monkey._ORIG["QDockWidget"]
+NativeQMainWindow = monkey._ORIG["QMainWindow"]
+
 
 def _dock(name: str) -> LDockWidget:
     d = LDockWidget(name)
+    d.setObjectName(name)
+    d.setWidget(QLabel(name))
+    return d
+
+
+def _native_dock(name: str) -> NativeQDockWidget:
+    d = NativeQDockWidget(name)
     d.setObjectName(name)
     d.setWidget(QLabel(name))
     return d
@@ -336,13 +347,15 @@ def test_toggle_view_action_shows_dock(qapp):
     assert not dock.isHidden()
 
 
-def test_toggle_view_action_show_selects_tab(qapp):
-    """Showing a hidden tabbed dock makes it the active tab again."""
+def test_toggle_view_action_show_restores_hidden_tab_visibility_without_reselecting(qapp):
+    """Showing a hidden non-current tab matches Qt: visible again, but not reselected."""
     win = LMainWindow()
     da = _dock("da")
     db = _dock("db")
     win.addDockWidget(LeftDockWidgetArea, da)
     win.addDockWidget(LeftDockWidgetArea, db)
+    win.show()
+    qapp.processEvents()
 
     area = win._dock_areas[LeftDockWidgetArea]
     area.set_current_tab_dock(da)
@@ -350,7 +363,73 @@ def test_toggle_view_action_show_selects_tab(qapp):
 
     db.toggleViewAction().setChecked(True)
 
-    assert area.current_tab_dock() is db
+    assert db.isVisible()
+    assert area.current_tab_dock() is da
+
+
+def test_tabified_non_current_dock_remains_visible_like_qt(qapp):
+    """Non-current tabified docks still report visible, matching native Qt."""
+    native = NativeQMainWindow()
+    native.setCentralWidget(QLabel("central"))
+    native_a = _native_dock("a")
+    native_b = _native_dock("b")
+    native.addDockWidget(LeftDockWidgetArea, native_a)
+    native.addDockWidget(LeftDockWidgetArea, native_b)
+    native.tabifyDockWidget(native_a, native_b)
+    native.show()
+
+    win = LMainWindow()
+    win.setCentralWidget(QLabel("central"))
+    dock_a = _dock("a")
+    dock_b = _dock("b")
+    win.addDockWidget(LeftDockWidgetArea, dock_a)
+    win.addDockWidget(LeftDockWidgetArea, dock_b)
+    win.show()
+    qapp.processEvents()
+
+    assert dock_a.isVisible() is native_a.isVisible()
+    assert dock_b.isVisible() is native_b.isVisible()
+
+
+def test_tabified_tab_switch_visibility_signals_match_qt(qapp):
+    """Tab switching keeps both docks visible and toggles visibilityChanged like Qt."""
+    native = NativeQMainWindow()
+    native.setCentralWidget(QLabel("central"))
+    native_a = _native_dock("a")
+    native_b = _native_dock("b")
+    native_log = []
+    native_a.visibilityChanged.connect(lambda value: native_log.append(("a", value)))
+    native_b.visibilityChanged.connect(lambda value: native_log.append(("b", value)))
+    native.addDockWidget(LeftDockWidgetArea, native_a)
+    native.addDockWidget(LeftDockWidgetArea, native_b)
+    native.tabifyDockWidget(native_a, native_b)
+    native.show()
+
+    win = LMainWindow()
+    win.setCentralWidget(QLabel("central"))
+    dock_a = _dock("a")
+    dock_b = _dock("b")
+    signal_log = []
+    dock_a.visibilityChanged.connect(lambda value: signal_log.append(("a", value)))
+    dock_b.visibilityChanged.connect(lambda value: signal_log.append(("b", value)))
+    win.addDockWidget(LeftDockWidgetArea, dock_a)
+    win.addDockWidget(LeftDockWidgetArea, dock_b)
+    win.show()
+    qapp.processEvents()
+
+    native_b.raise_()
+    win._dock_areas[LeftDockWidgetArea].set_current_tab_dock(dock_b)
+    qapp.processEvents()
+
+    native_log.clear()
+    signal_log.clear()
+    native_a.raise_()
+    win._dock_areas[LeftDockWidgetArea].set_current_tab_dock(dock_a)
+    qapp.processEvents()
+
+    assert dock_a.isVisible() is native_a.isVisible()
+    assert dock_b.isVisible() is native_b.isVisible()
+    assert signal_log == native_log
 
 
 def test_toggle_view_action_restores_hidden_floating_dock(qapp):
