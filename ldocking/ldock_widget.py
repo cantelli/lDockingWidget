@@ -529,26 +529,33 @@ class LDockWidget(QWidget):
 
     def _do_resize(self, global_pos: QPoint) -> None:
         delta = global_pos - self._resize_start_pos
-        geom = QRect(self._resize_start_geom)
+        start = QRect(self._resize_start_geom)
         minimum = self.minimumSizeHint().expandedTo(self.minimumSize())
-        min_w = max(80, minimum.width())
-        min_h = max(40, minimum.height())
+        maximum = self.maximumSize()
+        min_w = minimum.width()
+        min_h = minimum.height()
+        max_w = max(min_w, maximum.width())
+        max_h = max(min_h, maximum.height())
+
+        new_x = start.x()
+        new_y = start.y()
+        new_w = start.width()
+        new_h = start.height()
 
         if self._resize_dir & _RESIZE_LEFT:
-            new_left = geom.left() + delta.x()
-            if geom.right() - new_left >= min_w:
-                geom.setLeft(new_left)
-        if self._resize_dir & _RESIZE_RIGHT:
-            new_right = geom.right() + delta.x()
-            if new_right - geom.left() >= min_w:
-                geom.setRight(new_right)
-        if self._resize_dir & _RESIZE_TOP:
-            new_top = geom.top() + delta.y()
-            if geom.bottom() - new_top >= min_h:
-                geom.setTop(new_top)
-        if self._resize_dir & _RESIZE_BOTTOM:
-            new_bottom = geom.bottom() + delta.y()
-            if new_bottom - geom.top() >= min_h:
-                geom.setBottom(new_bottom)
+            requested_w = start.width() - delta.x()
+            new_w = max(min_w, min(requested_w, max_w))
+            new_x = start.x() + delta.x()
+        elif self._resize_dir & _RESIZE_RIGHT:
+            requested_w = start.width() + delta.x()
+            new_w = max(min_w, min(requested_w, max_w))
 
-        self.setGeometry(geom)
+        if self._resize_dir & _RESIZE_TOP:
+            requested_h = start.height() - delta.y()
+            new_h = max(min_h, min(requested_h, max_h))
+            new_y = start.y() + delta.y()
+        elif self._resize_dir & _RESIZE_BOTTOM:
+            requested_h = start.height() + delta.y()
+            new_h = max(min_h, min(requested_h, max_h))
+
+        self.setGeometry(new_x, new_y, new_w, new_h)

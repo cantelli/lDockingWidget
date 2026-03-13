@@ -78,6 +78,7 @@ class LDockTabArea(QWidget):
         self._grouped_dragging = False
         self._hidden_docks: set[LDockWidget] = set()
         self._exposed_docks: dict[LDockWidget, bool] = {}
+        self._preferred_sizes: dict[LDockWidget, object] = {}
         self._last_current_index = -1
 
         self._layout = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
@@ -98,6 +99,7 @@ class LDockTabArea(QWidget):
     def add_dock(self, dock: LDockWidget) -> None:
         if dock in self._docks:
             return
+        self._preferred_sizes[dock] = dock.size()
         self._docks.append(dock)
         self._stack.addWidget(dock)
         dock._title_bar.hide()
@@ -127,6 +129,7 @@ class LDockTabArea(QWidget):
         self._title_connections.pop(dock, None)
         self._hidden_docks.discard(dock)
         self._exposed_docks.pop(dock, None)
+        self._preferred_sizes.pop(dock, None)
         self._sync_visibility()
 
     def contains(self, dock: LDockWidget) -> bool:
@@ -269,6 +272,7 @@ class LDockTabArea(QWidget):
             self._tab_bar.setCurrentIndex(current_index)
             self._tab_bar.blockSignals(was_blocked)
         self._set_stack_current_index(current_index)
+        self._sync_dock_sizes()
 
         tab_area_visible = super().isVisible()
         for index, dock in enumerate(self._docks):
@@ -296,3 +300,15 @@ class LDockTabArea(QWidget):
         self._stack.setCurrentIndex(index)
         for dock in self._docks:
             dock._tab_visibility_sync = False
+
+    def _sync_dock_sizes(self) -> None:
+        for dock in self._docks:
+            base = self._preferred_sizes.get(dock, dock.size())
+            if not base.isValid():
+                base = dock.sizeHint()
+            bounded = base.expandedTo(
+                dock.minimumSizeHint().expandedTo(dock.minimumSize())
+            ).boundedTo(dock.maximumSize())
+            if dock.size() != bounded:
+                dock.resize(bounded)
+            self._preferred_sizes[dock] = dock.size()

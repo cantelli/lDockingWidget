@@ -235,6 +235,118 @@ def test_floating_resize_respects_minimum_size(qapp):
     assert dock.height() >= 120
 
 
+def test_floating_resize_top_left_clamps_like_native_qt(qapp):
+    """Top/left floating resize overshoot clamps to native Qt min/max geometry."""
+    native_win = NativeQMainWindow()
+    native_win.setCentralWidget(QLabel("center"))
+    native = _native_dock("native")
+    native.setMinimumSize(180, 120)
+    native.setMaximumSize(220, 160)
+    native_win.addDockWidget(LeftDockWidgetArea, native)
+    native.setFloating(True)
+
+    win = LMainWindow()
+    win.setCentralWidget(QLabel("center"))
+    dock = _dock("dock")
+    dock.setMinimumSize(180, 120)
+    dock.setMaximumSize(220, 160)
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    dock.setFloating(True)
+    qapp.processEvents()
+
+    start_rect = QRect(100, 100, 220, 160)
+    native.setGeometry(start_rect)
+    dock.setGeometry(start_rect)
+    qapp.processEvents()
+
+    native_target = QRect(start_rect)
+    native_target.setLeft(native_target.left() + 80)
+    native_target.setTop(native_target.top() + 80)
+    native.setGeometry(native_target)
+
+    dock._resize_dir = 1 | 4
+    dock._resize_start_pos = QPoint(0, 0)
+    dock._resize_start_geom = QRect(start_rect)
+    dock._do_resize(QPoint(80, 80))
+    qapp.processEvents()
+
+    assert dock.geometry() == native.geometry()
+
+
+def test_floating_resize_top_left_grow_clamps_to_maximum_like_native_qt(qapp):
+    """Growing a floating dock from top/left clamps to maximum size like native Qt."""
+    native_win = NativeQMainWindow()
+    native_win.setCentralWidget(QLabel("center"))
+    native = _native_dock("native")
+    native.setMinimumSize(180, 120)
+    native.setMaximumSize(220, 160)
+    native_win.addDockWidget(LeftDockWidgetArea, native)
+    native.setFloating(True)
+
+    win = LMainWindow()
+    win.setCentralWidget(QLabel("center"))
+    win.resize(800, 600)
+    dock = _dock("dock")
+    dock.setMinimumSize(180, 120)
+    dock.setMaximumSize(220, 160)
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    dock.setFloating(True)
+    qapp.processEvents()
+
+    start_rect = QRect(100, 100, 200, 140)
+    native.setGeometry(start_rect)
+    dock.setGeometry(start_rect)
+    qapp.processEvents()
+
+    native_target = QRect(start_rect)
+    native_target.setLeft(native_target.left() - 80)
+    native_target.setTop(native_target.top() - 80)
+    native.setGeometry(native_target)
+
+    dock._resize_dir = 1 | 4
+    dock._resize_start_pos = QPoint(0, 0)
+    dock._resize_start_geom = QRect(start_rect)
+    dock._do_resize(QPoint(-80, -80))
+    qapp.processEvents()
+
+    assert dock.geometry() == native.geometry()
+
+
+def test_tabified_hidden_peer_respects_maximum_size_like_native_qt(qapp):
+    """Tabified dock peers keep native-like constrained sizes after initial tabify."""
+    native_win = NativeQMainWindow()
+    native_win.setCentralWidget(QLabel("center"))
+    native_a = _native_dock("native_a")
+    native_a.setMinimumWidth(120)
+    native_a.setMaximumWidth(160)
+    native_b = _native_dock("native_b")
+    native_b.setMinimumWidth(220)
+    native_b.setMaximumWidth(260)
+    native_win.addDockWidget(LeftDockWidgetArea, native_a)
+    native_win.addDockWidget(LeftDockWidgetArea, native_b)
+    native_win.show()
+    qapp.processEvents()
+    native_win.tabifyDockWidget(native_a, native_b)
+
+    win = LMainWindow()
+    win.setCentralWidget(QLabel("center"))
+    dock_a = _dock("dock_a")
+    dock_a.setMinimumWidth(120)
+    dock_a.setMaximumWidth(160)
+    dock_b = _dock("dock_b")
+    dock_b.setMinimumWidth(220)
+    dock_b.setMaximumWidth(260)
+    win.addDockWidget(LeftDockWidgetArea, dock_a)
+    win.addDockWidget(LeftDockWidgetArea, dock_b)
+    win.show()
+    qapp.processEvents()
+    win.tabifyDockWidget(dock_a, dock_b)
+    qapp.processEvents()
+
+    assert dock_a.width() == native_a.width()
+    assert dock_b.width() == native_b.width()
+
+
 def test_title_bar_button_press_does_not_start_drag_tracking(qapp):
     """Pressing the float button does not arm title-bar drag tracking."""
     dock = _dock("d")
