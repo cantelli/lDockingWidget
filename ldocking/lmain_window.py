@@ -1130,6 +1130,16 @@ class LMainWindow(QWidget):
         entry = self._pending_dock_restore.pop(ident, None)
         if entry is None:
             return False
+        return self._restore_dock_entry(dock, entry)
+
+    def _restore_dock_entry(
+        self,
+        dock: LDockWidget,
+        entry: dict[str, object],
+    ) -> bool:
+        ident = self._dock_id(dock)
+        if ident is None:
+            return False
         try:
             area = Qt.DockWidgetArea(int(entry["area"]))
         except (KeyError, TypeError, ValueError):
@@ -2108,6 +2118,7 @@ class LMainWindow(QWidget):
         docks_state = []
         self._sync_dock_map()
         restore_hints: dict[str, dict[str, object]] = {}
+        selected_overrides: dict[str, str] = {}
         for area in (
             LeftDockWidgetArea,
             RightDockWidgetArea,
@@ -2122,17 +2133,22 @@ class LMainWindow(QWidget):
                 continue
             area_docks = self._dock_areas[area]._docks
             tab_index = area_docks.index(dock) if dock in area_docks else 0
+            floating_from_tab = dock._floating and dock._pre_float_save_as_docked
             entry: dict[str, object] = {
                 "id": ident,
                 "area": area.value,
-                "tab_index": tab_index,
-                "floating": dock._floating,
+                "tab_index": dock._pre_float_position if floating_from_tab and dock._pre_float_position is not None else tab_index,
+                "floating": dock._floating and not floating_from_tab,
                 "visible": dock._toggle_action_checked_value(),
             }
-            if dock._floating:
+            if entry["floating"]:
                 g = dock.geometry()
                 entry["geometry"] = [g.x(), g.y(), g.width(), g.height()]
             entry.update(restore_hints.get(ident, {}))
+            if floating_from_tab and dock._pre_float_restore_hint is not None:
+                entry.update(deepcopy(dock._pre_float_restore_hint))
+                if dock._pre_float_selected:
+                    selected_overrides[str(int(area.value))] = ident
             docks_state.append(entry)
 
         current_tabs: dict[str, str] = {}
@@ -2142,6 +2158,7 @@ class LMainWindow(QWidget):
                 ident = current_dock.objectName() or current_dock.windowTitle()
                 if ident:
                     current_tabs[str(area.value)] = ident
+        current_tabs.update(selected_overrides)
         for entry in docks_state:
             entry["selected"] = current_tabs.get(str(entry["area"])) == entry["id"]
 
@@ -2182,6 +2199,16 @@ class LMainWindow(QWidget):
                     self._restore_docked_layout_from_area_trees(area_trees, lookup)
                 else:
                     self._restore_docked_layout_from_flat_entries(entries, lookup)
+
+            for entry in entries:
+                if entry.get("floating"):
+                    continue
+                dock = lookup.get(entry["id"])
+                if dock is None:
+                    continue
+                if self._area_for_dock(dock) != Qt.DockWidgetArea.NoDockWidgetArea:
+                    continue
+                self._restore_dock_entry(dock, entry)
 
             for entry in entries:
                 dock = lookup.get(entry["id"])

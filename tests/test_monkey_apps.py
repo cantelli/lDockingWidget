@@ -2,8 +2,11 @@
 
 import importlib
 import sys
+from pathlib import Path
+import importlib.util
 
 from PySide6.QtWidgets import QToolBar
+from PySide6.QtCore import Qt
 
 import ldocking.monkey as monkey
 from ldocking import LDockWidget
@@ -11,6 +14,16 @@ from parity_test import _corner_snap, _toolbar_snap, compare, l_snap, qt_snap
 
 FIXTURE_PREFIX = "tools.dock_benchmarks.fixtures"
 NativeQDockWidget = monkey._ORIG["QDockWidget"]
+EXAMPLE_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "third_party"
+    / "dock_benchmarks"
+    / "pyside-setup"
+    / "examples"
+    / "widgets"
+    / "mainwindows"
+    / "dockwidgets"
+)
 
 
 def _clear_fixture_modules():
@@ -59,6 +72,23 @@ def _build_fixture_pair(qapp, module_name: str):
     return native_win, monkey_win
 
 
+def _load_official_example(qapp, mode: str):
+    if mode == "monkey":
+        monkey.patch()
+    else:
+        monkey.unpatch()
+    sys.path.insert(0, str(EXAMPLE_DIR))
+    spec = importlib.util.spec_from_file_location(f"dockwidgets_test_{mode}", EXAMPLE_DIR / "dockwidgets.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    window = module.MainWindow()
+    window.show()
+    qapp.processEvents()
+    return window
+
+
 def test_qtpy_style_fixture_native_vs_monkey_layout(qapp):
     native_win, monkey_win = _build_fixture_pair(qapp, "qtpy_style_app")
     native_state, monkey_state = _snapshot_pair(native_win, monkey_win)
@@ -105,6 +135,48 @@ def test_labelme_shape_toggle_and_restore_parity(qapp):
     qapp.processEvents()
 
     native_state, monkey_state = _snapshot_pair(native_win, monkey_win)
+    assert compare(native_state, monkey_state, ["area", "floating", "visible", "tabs"]) == []
+
+    native_win.close()
+    monkey_win.close()
+
+
+def test_official_example_tab_float_restore_parity(qapp):
+    if not EXAMPLE_DIR.exists():
+        import pytest
+
+        pytest.skip("official Qt dockwidgets example is not present locally")
+
+    native_win = _load_official_example(qapp, "native")
+    monkey_win = _load_official_example(qapp, "monkey")
+
+    native_docks = sorted(native_win.findChildren(NativeQDockWidget), key=lambda dock: dock.windowTitle())
+    monkey_docks = sorted(monkey_win.findChildren(LDockWidget), key=lambda dock: dock.windowTitle())
+    native_first, native_second = native_docks
+    monkey_first, monkey_second = monkey_docks
+
+    native_win.tabifyDockWidget(native_first, native_second)
+    monkey_win.tabifyDockWidget(monkey_first, monkey_second)
+    qapp.processEvents()
+
+    native_second.setFloating(True)
+    monkey_second.setFloating(True)
+    qapp.processEvents()
+
+    native_saved = native_win.saveState()
+    monkey_saved = monkey_win.saveState()
+    native_second.setFloating(False)
+    monkey_second.setFloating(False)
+    qapp.processEvents()
+
+    assert native_win.restoreState(native_saved) is True
+    assert monkey_win.restoreState(monkey_saved) is True
+    qapp.processEvents()
+
+    native_state = qt_snap(native_win, native_docks)
+    native_state["toolbars"] = _toolbar_snap(native_win, sorted(native_win.findChildren(QToolBar), key=lambda tb: tb.windowTitle()))
+    native_state["corners"] = _corner_snap(native_win)
+    monkey_state = l_snap(monkey_win, monkey_docks, sorted(monkey_win.findChildren(QToolBar), key=lambda tb: tb.windowTitle()))
     assert compare(native_state, monkey_state, ["area", "floating", "visible", "tabs"]) == []
 
     native_win.close()

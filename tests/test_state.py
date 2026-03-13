@@ -536,6 +536,34 @@ def test_restore_dock_widget_late_floating_restore(qapp):
     assert (geometry.x(), geometry.y(), geometry.width(), geometry.height()) == (50, 60, 220, 180)
 
 
+def test_save_restore_floated_tab_peer_returns_to_tab_group(qapp):
+    """A dock floated out of a tab group restores back into that saved tab group."""
+    source = LMainWindow()
+    first = _make_dock("first")
+    second = _make_dock("second")
+    source.addDockWidget(RightDockWidgetArea, first)
+    source.addDockWidget(RightDockWidgetArea, second)
+    source.tabifyDockWidget(first, second)
+    second.setFloating(True)
+    state = source.saveState()
+
+    win = LMainWindow()
+    first_live = _make_dock("first")
+    second_live = _make_dock("second")
+    win.addDockWidget(LeftDockWidgetArea, first_live)
+    win.addDockWidget(LeftDockWidgetArea, second_live)
+    win.show()
+    qapp.processEvents()
+
+    assert win.restoreState(state) is True
+    qapp.processEvents()
+    assert not first_live.isFloating()
+    assert not second_live.isFloating()
+    assert win.dockWidgetArea(first_live) == RightDockWidgetArea
+    assert win.dockWidgetArea(second_live) == RightDockWidgetArea
+    assert second_live in win.tabifiedDockWidgets(first_live)
+
+
 def test_restore_dock_widget_late_tabbed_restore(qapp):
     """restoreDockWidget restores a late dock into the saved tabbed area."""
     source = LMainWindow()

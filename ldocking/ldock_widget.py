@@ -108,6 +108,9 @@ class LDockWidget(QWidget):
         self._tabbed_visibility_override: bool | None = None
         self._tab_visibility_sync = False
         self._explicitly_hidden = False
+        self._pre_float_restore_hint: dict[str, object] | None = None
+        self._pre_float_selected = False
+        self._pre_float_save_as_docked = False
 
         # Resize drag state
         self._resize_dir = 0
@@ -248,6 +251,22 @@ class LDockWidget(QWidget):
             floating_size = floating_size.expandedTo(_DEFAULT_FLOATING_SIZE)
 
         if self._current_area is not None:
+            dock_id = self._main_window._dock_id(self) if self._main_window is not None else None
+            self._pre_float_restore_hint = None
+            self._pre_float_selected = False
+            self._pre_float_save_as_docked = False
+            if self._main_window is not None and dock_id is not None:
+                hints: dict[str, dict[str, object]] = {}
+                area_state = self._current_area.export_state()
+                self._main_window._collect_restore_hints(area_state, hints)
+                self._pre_float_restore_hint = hints.get(dock_id)
+                current = self._current_area.current_tab_dock()
+                current_id = self._main_window._dock_id(current) if current is not None else None
+                self._pre_float_selected = current_id == dock_id
+                self._pre_float_save_as_docked = bool(
+                    self._pre_float_restore_hint
+                    and self._pre_float_restore_hint.get("restore_mode") == "tab"
+                )
             self._pre_float_position = self._current_area._insertion_order.get(
                 self,
                 self._current_area._docks.index(self),
