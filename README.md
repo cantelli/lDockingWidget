@@ -30,6 +30,7 @@ Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses th
 - `saveState(version)` persists the caller-provided version number, and `restoreState(state, version)` requires the same version to succeed.
 - `restoreDockWidget()` is supported for docks that are created after `restoreState()`.
 - `setCorner()` now controls toolbar-corner ownership for the four-area toolbar shell.
+- Docked chrome, tabs, toolbars, corners, and saved-state behavior are the primary parity targets; floating docks intentionally remain a frameless `Qt.Tool + FramelessWindowHint` presentation and are visually close to Qt rather than pixel-identical.
 
 ## Installation
 
@@ -110,7 +111,7 @@ The root content tree is the authoritative top-level docking layout. Compatibili
 | Class | Replaces | Notes |
 |---|---|---|
 | `LMainWindow` | `QMainWindow` | `QWidget` subclass, never creates `QDockAreaLayout` |
-| `LDockWidget` | `QDockWidget` | `QWidget` subclass, floating uses `Qt.Tool + FramelessWindowHint` |
+| `LDockWidget` | `QDockWidget` | `QWidget` subclass, floating stays frameless with `Qt.Tool + FramelessWindowHint` |
 | `LDockArea` | internal | One dock strip; auto-collapses when empty |
 | `LDockTabArea` | internal | `QTabBar + QStackedWidget`; appears when 2+ docks share an area |
 | `LTitleBar` | internal | Drag handle with float/close buttons |
@@ -262,4 +263,5 @@ python tests/visual_compare_demo.py # side-by-side Qt vs ldocking visual compari
 - `LDragManager` is a singleton; only one drag operation is active at a time.
 - `setCorner` controls which toolbar area visually owns each window corner.
 - `addToolBar` accepts either a `QToolBar` instance or a `str` title (matches both `QMainWindow` overloads). All four Qt toolbar areas are supported, and toolbar-break methods create additional lines within the selected area.
+- Floating docks deliberately use a frameless top-level widget instead of native Qt floating-window chrome. The visual test suite treats floated docks as bounded-similarity parity rather than exact pixel equivalence.
 - QSS background rules require `WA_StyledBackground = True`, which is set on `LMainWindow`, `LDockWidget`, and `LDockArea`. The drop indicator uses `QPalette.Highlight` for theme awareness.

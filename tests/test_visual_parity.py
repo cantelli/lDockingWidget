@@ -44,7 +44,9 @@ except ImportError:
 COLOR_TOL = 35
 GEOM_TOL = 8
 IMAGE_DIFF_TOL = 12.0
-RELAXED_IMAGE_DIFF_TOL = 26.0
+# Floating parity is intentionally looser because ldocking stays frameless
+# instead of matching native Qt floating-window chrome pixel-for-pixel.
+FLOATING_IMAGE_DIFF_TOL = 26.0
 
 
 # ------------------------------------------------------------------
@@ -759,7 +761,7 @@ def test_corner_visual_ownership_shifts_ldocking_toolbar_bounds(qapp):
 
 
 def test_floating_dock_geometry_and_screenshot_parity(qapp):
-    """Floated docks keep similar chrome metrics and screenshot shape to Qt."""
+    """Floated docks stay visually bounded under the frameless floating model."""
     qapp.setStyle("Fusion")
     lmw, ldock = _make_l_window("Float")
     qtmw, qtdock = _make_qt_window("Float")
@@ -775,7 +777,7 @@ def test_floating_dock_geometry_and_screenshot_parity(qapp):
     assert qtdock.isVisible()
 
     diff = _avg_image_diff(ldock.grab().toImage(), qtdock.grab().toImage())
-    assert diff <= RELAXED_IMAGE_DIFF_TOL
+    assert diff <= FLOATING_IMAGE_DIFF_TOL
     ldock.hide()
     qtdock.hide()
 

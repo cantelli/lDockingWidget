@@ -1,7 +1,9 @@
 """LDockWidget — drop-in replacement for QDockWidget.
 
 Uses QWidget as base to avoid QMainWindow's C++ type check on addDockWidget.
-Floating uses Qt.Tool + FramelessWindowHint with a QSizeGrip for resizing.
+Floating stays in a frameless Qt.Tool window with a QSizeGrip for resizing.
+That keeps the implementation independent from Qt's native dock internals, but
+means floating chrome is only approximately Qt-like rather than pixel-identical.
 """
 from __future__ import annotations
 
@@ -219,6 +221,8 @@ class LDockWidget(QWidget):
             self.sizeHint().expandedTo(self.minimumSize())
         )
         if self._main_window is not None:
+            # Floating starts from a more window-like size than the narrow dock strip.
+            # This keeps the frameless presentation usable without claiming exact Qt parity.
             floating_size = floating_size.expandedTo(
                 QSize(
                     max(_DEFAULT_FLOATING_SIZE.width(), self._main_window.width() // 3),
