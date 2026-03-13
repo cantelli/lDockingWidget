@@ -585,6 +585,80 @@ def test_restore_dock_widget_late_tabbed_restore(qapp):
     assert second_live in win.tabifiedDockWidgets(first_live)
 
 
+def test_save_restore_preserves_constrained_tabified_dock_sizes(qapp):
+    """ldocking save/restore keeps constrained tab peer sizes stable."""
+    source = LMainWindow()
+    source.setCentralWidget(QWidget())
+    first = _make_dock("first")
+    first.setMinimumWidth(120)
+    first.setMaximumWidth(160)
+    second = _make_dock("second")
+    second.setMinimumWidth(220)
+    second.setMaximumWidth(260)
+    source.addDockWidget(LeftDockWidgetArea, first)
+    source.addDockWidget(LeftDockWidgetArea, second)
+    source.show()
+    qapp.processEvents()
+    source.tabifyDockWidget(first, second)
+    qapp.processEvents()
+    state = source.saveState()
+
+    restored = LMainWindow()
+    restored.setCentralWidget(QWidget())
+    first_live = _make_dock("first")
+    first_live.setMinimumWidth(120)
+    first_live.setMaximumWidth(160)
+    second_live = _make_dock("second")
+    second_live.setMinimumWidth(220)
+    second_live.setMaximumWidth(260)
+    restored.addDockWidget(RightDockWidgetArea, first_live)
+    restored.addDockWidget(RightDockWidgetArea, second_live)
+
+    assert restored.restoreState(state) is True
+    restored.show()
+    qapp.processEvents()
+
+    assert first_live.width() == 160
+    assert second_live.width() == 220
+
+
+def test_restore_dock_widget_late_tabbed_restore_preserves_constrained_sizes(qapp):
+    """Late restore into a tab group preserves the saved constrained peer sizes."""
+    source = LMainWindow()
+    source.setCentralWidget(QWidget())
+    first = _make_dock("first")
+    first.setMinimumWidth(120)
+    first.setMaximumWidth(160)
+    second = _make_dock("second")
+    second.setMinimumWidth(220)
+    second.setMaximumWidth(260)
+    source.addDockWidget(LeftDockWidgetArea, first)
+    source.addDockWidget(LeftDockWidgetArea, second)
+    source.show()
+    qapp.processEvents()
+    source.tabifyDockWidget(first, second)
+    qapp.processEvents()
+    state = source.saveState()
+
+    win = LMainWindow()
+    win.setCentralWidget(QWidget())
+    first_live = _make_dock("first")
+    first_live.setMinimumWidth(120)
+    first_live.setMaximumWidth(160)
+    win.addDockWidget(RightDockWidgetArea, first_live)
+
+    assert win.restoreState(state) is True
+    second_live = _make_dock("second")
+    second_live.setMinimumWidth(220)
+    second_live.setMaximumWidth(260)
+    assert win.restoreDockWidget(second_live) is True
+    win.show()
+    qapp.processEvents()
+
+    assert first_live.width() == 160
+    assert second_live.width() == 220
+
+
 def test_restore_dock_widget_matches_direct_tab_insert_state(qapp):
     """Late restore into a saved tab group matches the direct docking state shape."""
     source = LMainWindow()
@@ -722,6 +796,42 @@ def test_restore_state_accepts_native_qt_save_state_for_docks(qapp):
     assert floating_live.isFloating()
     geometry = floating_live.geometry()
     assert (geometry.x(), geometry.y(), geometry.width(), geometry.height()) == (120, 140, 260, 210)
+
+
+def test_restore_state_accepts_native_qt_save_state_for_constrained_tab_sizes(qapp):
+    """Native Qt import preserves constrained tabified peer sizes."""
+    native = _make_native_main_window()
+    first = _make_native_dock("first")
+    first.setMinimumWidth(120)
+    first.setMaximumWidth(160)
+    second = _make_native_dock("second")
+    second.setMinimumWidth(220)
+    second.setMaximumWidth(260)
+    native.addDockWidget(LeftDockWidgetArea, first)
+    native.addDockWidget(LeftDockWidgetArea, second)
+    native.show()
+    qapp.processEvents()
+    native.tabifyDockWidget(first, second)
+    qapp.processEvents()
+    state = native.saveState()
+
+    win = LMainWindow()
+    win.setCentralWidget(QWidget())
+    first_live = _make_dock("first")
+    first_live.setMinimumWidth(120)
+    first_live.setMaximumWidth(160)
+    second_live = _make_dock("second")
+    second_live.setMinimumWidth(220)
+    second_live.setMaximumWidth(260)
+    win.addDockWidget(BottomDockWidgetArea, first_live)
+    win.addDockWidget(BottomDockWidgetArea, second_live)
+
+    assert win.restoreState(state) is True
+    win.show()
+    qapp.processEvents()
+
+    assert first_live.width() == 160
+    assert second_live.width() == 220
 
 
 def test_restore_state_accepts_native_qt_save_state_for_toolbar_shell(qapp):

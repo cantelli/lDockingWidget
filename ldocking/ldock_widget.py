@@ -111,6 +111,7 @@ class LDockWidget(QWidget):
         self._pre_float_restore_hint: dict[str, object] | None = None
         self._pre_float_selected = False
         self._pre_float_save_as_docked = False
+        self._restored_docked_size: QSize | None = None
 
         # Resize drag state
         self._resize_dir = 0

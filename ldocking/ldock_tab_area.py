@@ -99,7 +99,10 @@ class LDockTabArea(QWidget):
     def add_dock(self, dock: LDockWidget) -> None:
         if dock in self._docks:
             return
-        self._preferred_sizes[dock] = dock.size()
+        restored_size = getattr(dock, "_restored_docked_size", None)
+        self._preferred_sizes[dock] = (
+            restored_size if restored_size is not None and restored_size.isValid() else dock.size()
+        )
         self._docks.append(dock)
         self._stack.addWidget(dock)
         dock._title_bar.hide()

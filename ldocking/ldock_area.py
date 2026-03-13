@@ -322,6 +322,12 @@ class LDockArea(QWidget):
             dock._current_area = self
             dock._set_tabbed_visibility_override(None)
             dock.setParent(parent)
+            restored_size = getattr(dock, "_restored_docked_size", None)
+            if restored_size is not None and restored_size.isValid():
+                bounded = restored_size.expandedTo(
+                    dock.minimumSizeHint().expandedTo(dock.minimumSize())
+                ).boundedTo(dock.maximumSize())
+                dock.resize(bounded)
             dock._title_bar.show()
             dock._tab_visibility_sync = True
             if dock._explicitly_hidden:

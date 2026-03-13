@@ -142,3 +142,45 @@ def test_ldocking_save_qt_state_export_parity(qapp):
         l_state,
         ["area", "floating", "tabs", "toolbar_area", "toolbar_order", "corners"],
     ) == []
+
+
+def test_constrained_tabified_dock_size_parity(qapp):
+    native = NativeQMainWindow()
+    native.setCentralWidget(QWidget())
+    qt_first = NativeQDockWidget("first")
+    qt_first.setObjectName("first")
+    qt_first.setWidget(QLabel("first"))
+    qt_first.setMinimumWidth(120)
+    qt_first.setMaximumWidth(160)
+    qt_second = NativeQDockWidget("second")
+    qt_second.setObjectName("second")
+    qt_second.setWidget(QLabel("second"))
+    qt_second.setMinimumWidth(220)
+    qt_second.setMaximumWidth(260)
+    native.addDockWidget(Left, qt_first)
+    native.addDockWidget(Left, qt_second)
+    native.show()
+    qapp.processEvents()
+    native.tabifyDockWidget(qt_first, qt_second)
+    qapp.processEvents()
+
+    l_win = LMainWindow()
+    l_win.setCentralWidget(QWidget())
+    l_first = LDockWidget("first")
+    l_first.setObjectName("first")
+    l_first.setWidget(QLabel("first"))
+    l_first.setMinimumWidth(120)
+    l_first.setMaximumWidth(160)
+    l_second = LDockWidget("second")
+    l_second.setObjectName("second")
+    l_second.setWidget(QLabel("second"))
+    l_second.setMinimumWidth(220)
+    l_second.setMaximumWidth(260)
+    l_win.addDockWidget(Left, l_first)
+    l_win.addDockWidget(Left, l_second)
+    l_win.show()
+    qapp.processEvents()
+    l_win.tabifyDockWidget(l_first, l_second)
+    qapp.processEvents()
+
+    assert (l_first.width(), l_second.width()) == (qt_first.width(), qt_second.width())

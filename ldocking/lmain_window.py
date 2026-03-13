@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QSize, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -449,6 +449,27 @@ class LMainWindow(QWidget):
             area_obj = self._dock_areas.get(area)
             if area_obj is not None:
                 area_obj.set_current_tab_dock(dock)
+
+    def _apply_restored_dock_sizes(
+        self,
+        entries: list[dict[str, object]],
+        lookup: dict[str, LDockWidget],
+    ) -> None:
+        for dock in lookup.values():
+            dock._restored_docked_size = None
+        for entry in entries:
+            dock = lookup.get(entry.get("id"))
+            if dock is None or entry.get("floating"):
+                continue
+            size = entry.get("docked_size")
+            if not (isinstance(size, list) and len(size) == 2):
+                continue
+            try:
+                width = int(size[0])
+                height = int(size[1])
+            except (TypeError, ValueError):
+                continue
+            dock._restored_docked_size = QSize(width, height)
 
     def _apply_area_state_updates(
         self,
@@ -1151,6 +1172,12 @@ class LMainWindow(QWidget):
         dock._pre_float_area_side = resolved_area
         dock._pre_float_position = int(entry.get("tab_index", 0))
         dock._floating = True
+        size = entry.get("docked_size")
+        if isinstance(size, list) and len(size) == 2:
+            try:
+                dock._restored_docked_size = QSize(int(size[0]), int(size[1]))
+            except (TypeError, ValueError):
+                dock._restored_docked_size = None
         mode = entry.get("restore_mode")
         target_id = entry.get("restore_target_id")
         side = None
@@ -1778,9 +1805,10 @@ class LMainWindow(QWidget):
         self,
         probe: QMainWindow,
         probe_docks: dict[str, QDockWidget],
-    ) -> tuple[dict[Qt.DockWidgetArea, object | None], dict[str, str]]:
+    ) -> tuple[dict[Qt.DockWidgetArea, object | None], dict[str, str], list[dict[str, object]]]:
         current_tabs: dict[str, str] = {}
         native_area_states: dict[Qt.DockWidgetArea, object | None] = {}
+        entries: list[dict[str, object]] = []
         for area in (
             LeftDockWidgetArea,
             RightDockWidgetArea,
@@ -1841,7 +1869,17 @@ class LMainWindow(QWidget):
                         "children": [area_state, group_state],
                     }
             native_area_states[area] = area_state
-        return native_area_states, current_tabs
+        for ident, probe_dock in probe_docks.items():
+            geometry = probe_dock.geometry()
+            entries.append(
+                {
+                    "id": ident,
+                    "area": int(probe.dockWidgetArea(probe_dock).value),
+                    "floating": probe_dock.isFloating(),
+                    "docked_size": [geometry.width(), geometry.height()],
+                }
+            )
+        return native_area_states, current_tabs, entries
 
     def _extract_native_probe_toolbar_state(
         self,
@@ -2080,9 +2118,10 @@ class LMainWindow(QWidget):
         self._dock_map.clear()
         self._pending_dock_restore = {}
 
-        native_area_states, current_tabs = self._extract_native_probe_dock_state(
+        native_area_states, current_tabs, native_entries = self._extract_native_probe_dock_state(
             probe, probe_docks
         )
+        self._apply_restored_dock_sizes(native_entries, dock_lookup)
         self._restore_projected_area_states(native_area_states, dock_lookup, current_tabs)
 
         for ident, dock in dock_lookup.items():
@@ -2141,6 +2180,8 @@ class LMainWindow(QWidget):
                 "floating": dock._floating and not floating_from_tab,
                 "visible": dock._toggle_action_checked_value(),
             }
+            if not entry["floating"]:
+                entry["docked_size"] = [dock.width(), dock.height()]
             if entry["floating"]:
                 g = dock.geometry()
                 entry["geometry"] = [g.x(), g.y(), g.width(), g.height()]
@@ -2189,6 +2230,7 @@ class LMainWindow(QWidget):
             self._empty_dock_restore_state(lookup)
 
             entries = sorted(data.get("docks", []), key=lambda e: e.get("tab_index", 0))
+            self._apply_restored_dock_sizes(entries, lookup)
             content_tree = data.get("content_tree")
             if content_tree is not None:
                 self._restore_docked_layout_from_content_tree(content_tree, lookup)
