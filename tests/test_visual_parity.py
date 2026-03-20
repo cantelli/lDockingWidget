@@ -29,6 +29,7 @@ from ldocking import (
     RightDockWidgetArea,
     TopDockWidgetArea,
     BottomDockWidgetArea,
+    translate_stylesheet,
 )
 from ldocking.ldrag_manager import _DropTarget
 
@@ -434,6 +435,85 @@ def test_ldock_widget_background_selector(qapp):
     dock.hide()
 
 
+def test_legacy_qdockwidget_selector_colors_ldockwidget(qapp):
+    """QDockWidget selector is translated for LDockWidget."""
+    CRIMSON = (180, 0, 40)
+    _, dock = _make_l_window()
+    dock.resize(200, 120)
+    dock.setStyleSheet(
+        "QDockWidget { background: rgb(180,0,40); }"
+        "QDockWidget::title { background: transparent; }"
+        "QDockWidget > QWidget { background: transparent; }"
+    )
+    dock.show()
+    qapp.processEvents()
+
+    edge = QRect(0, dock._title_bar.height() + 4, 4, 20)
+    color = _sample(dock, edge)
+    assert _close(color, CRIMSON)
+    dock.hide()
+
+
+def test_legacy_qdockwidget_title_selector_colors_ldock_titlebar(qapp):
+    """QDockWidget::title selector maps to the custom title bar."""
+    GREEN = (0, 200, 0)
+    _, dock = _make_l_window()
+    dock.resize(200, 120)
+    dock.setStyleSheet("QDockWidget::title { background: rgb(0,200,0); }")
+    dock.show()
+    qapp.processEvents()
+
+    color = _sample(dock._title_bar)
+    assert _close(color, GREEN)
+    dock.hide()
+
+
+def test_legacy_qmainwindow_selector_colors_lmainwindow(qapp):
+    """QMainWindow selector is translated for LMainWindow."""
+    BLUE = (0, 0, 200)
+    lmw, _ = _make_l_window()
+    lmw.resize(320, 220)
+    lmw.setStyleSheet("QMainWindow { background: rgb(0,0,200); }")
+    lmw.show()
+    qapp.processEvents()
+
+    color = _sample(lmw, QRect(10, 10, 20, 20))
+    assert _close(color, BLUE)
+    lmw.hide()
+
+
+def test_legacy_qdockwidget_button_selectors_map_to_named_title_buttons(qapp):
+    """QDockWidget button selectors translate to the named title-bar buttons."""
+    _, dock = _make_l_window()
+    translated = translate_stylesheet(
+        "QDockWidget::close-button { background: rgb(200,0,0); }"
+        "QDockWidget::float-button { background: rgb(0,0,200); }"
+    )
+    assert "#dockCloseButton" in translated
+    assert "#dockFloatButton" in translated
+    assert dock._title_bar._close_btn.objectName() == "dockCloseButton"
+    assert dock._title_bar._float_btn.objectName() == "dockFloatButton"
+
+
+def test_translate_stylesheet_maps_qt_dock_selectors():
+    translated = translate_stylesheet(
+        "QMainWindow::separator { background: red; }"
+        "QDockWidget::title { color: green; }"
+        "QDockWidget::close-button { background: blue; }"
+        "QDockWidget::float-button { background: yellow; }"
+        "QDockWidget > QWidget { background: black; }"
+        "QDockWidget { border: 1px solid red; }"
+        "QMainWindow { background: white; }"
+    )
+    assert "#dockTitleBar" in translated
+    assert "#dockCloseButton" in translated
+    assert "#dockFloatButton" in translated
+    assert "#dockContent" in translated
+    assert "QSplitter::handle" in translated
+    assert 'QWidget[class="QDockWidget"]' in translated
+    assert 'QWidget[class="QMainWindow"]' in translated
+
+
 # ------------------------------------------------------------------
 # Baseline: verify the same technique works on Qt's QDockWidget
 # (validates that our test infrastructure is sound, not just our code)
@@ -713,6 +793,58 @@ def test_splitter_geometry_parity_left_right_layout(qapp):
     assert _close_int(l_right_rect.width(), q_right_rect.width(), 30)
     assert _close_int(l_left_rect.x(), q_left_rect.x(), 10)
     assert _close_int(l_right_rect.right(), q_right_rect.right(), 30)
+
+    lmw.hide()
+    qtmw.hide()
+
+
+def test_splitter_geometry_parity_left_right_bottom_layout(qapp):
+    """Bottom dock spans the full shell width like Qt when side docks are present."""
+    qapp.setStyle("Fusion")
+    lmw = LMainWindow()
+    lmw.resize(720, 460)
+    lmw.setCentralWidget(QLabel("central"))
+    l_left = LDockWidget("Left")
+    l_right = LDockWidget("Right")
+    l_bottom = LDockWidget("Bottom")
+    for dock in (l_left, l_right, l_bottom):
+        dock.setWidget(QLabel(dock.windowTitle()))
+    lmw.addDockWidget(LeftDockWidgetArea, l_left)
+    lmw.addDockWidget(RightDockWidgetArea, l_right)
+    lmw.addDockWidget(BottomDockWidgetArea, l_bottom)
+
+    qtmw = _RealQMainWindow()
+    qtmw.resize(720, 460)
+    qtmw.setCentralWidget(QLabel("central"))
+    q_left = _RealQDockWidget("Left", qtmw)
+    q_right = _RealQDockWidget("Right", qtmw)
+    q_bottom = _RealQDockWidget("Bottom", qtmw)
+    for dock in (q_left, q_right, q_bottom):
+        dock.setWidget(QLabel(dock.windowTitle()))
+    qtmw.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, q_left)
+    qtmw.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, q_right)
+    qtmw.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, q_bottom)
+    _apply_comparison_style(lmw, qtmw)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    l_left_rect = _global_rect(l_left)
+    l_right_rect = _global_rect(l_right)
+    l_bottom_rect = _global_rect(l_bottom)
+    q_left_rect = _global_rect(q_left)
+    q_right_rect = _global_rect(q_right)
+    q_bottom_rect = _global_rect(q_bottom)
+
+    assert _close_int(l_bottom_rect.width(), q_bottom_rect.width(), 30)
+    assert _close_int(l_bottom_rect.x(), q_bottom_rect.x(), 20)
+    assert _close_int(l_bottom_rect.right(), q_bottom_rect.right(), 20)
+    assert _close_int(l_bottom_rect.top() - l_left_rect.bottom(), q_bottom_rect.top() - q_left_rect.bottom(), 4)
+    assert _close_int(l_bottom_rect.top() - l_right_rect.bottom(), q_bottom_rect.top() - q_right_rect.bottom(), 4)
+    assert l_left_rect.bottom() < l_bottom_rect.top()
+    assert l_right_rect.bottom() < l_bottom_rect.top()
+    assert l_bottom_rect.width() > l_left_rect.width()
+    assert l_bottom_rect.width() > l_right_rect.width()
 
     lmw.hide()
     qtmw.hide()

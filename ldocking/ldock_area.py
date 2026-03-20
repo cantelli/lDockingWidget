@@ -8,6 +8,7 @@ from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QSizePolicy, QSplitter, QTabWidget, QVBoxLayout, QWidget
 
 from .ldock_tab_area import LDockTabArea
+from .stylesheet_compat import translate_stylesheet
 
 if TYPE_CHECKING:
     from .ldock_widget import LDockWidget
@@ -41,6 +42,7 @@ class LDockArea(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("class", "QDockArea")
         area_names = {
             Qt.DockWidgetArea.LeftDockWidgetArea: "dockAreaLeft",
             Qt.DockWidgetArea.RightDockWidgetArea: "dockAreaRight",
@@ -83,6 +85,9 @@ class LDockArea(QWidget):
     @property
     def area_side(self) -> Qt.DockWidgetArea:
         return self._area_side
+
+    def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
+        super().setStyleSheet(translate_stylesheet(styleSheet))
 
     def add_dock(self, dock: LDockWidget, index: int | None = None) -> None:
         if dock in self._dock_to_node:

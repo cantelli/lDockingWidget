@@ -977,7 +977,7 @@ def test_drop_docks_accepts_target_id_without_target_widget(qapp):
 
 
 def test_root_tree_grows_around_central_widget(qapp):
-    """Top-level content tree inserts area leaves relative to the central leaf."""
+    """Top-level content tree wraps the full central shell when orientations change."""
     win = LMainWindow()
     left = _dock("left")
     top = _dock("top")
@@ -991,13 +991,19 @@ def test_root_tree_grows_around_central_widget(qapp):
         "split",
         int(Qt.Orientation.Horizontal.value),
         (
-            ("leaf", "left"),
             (
                 "split",
                 int(Qt.Orientation.Vertical.value),
                 (
                     ("leaf", "top"),
-                    ("leaf", "central"),
+                    (
+                        "split",
+                        int(Qt.Orientation.Horizontal.value),
+                        (
+                            ("leaf", "left"),
+                            ("leaf", "central"),
+                        ),
+                    ),
                 ),
             ),
             ("leaf", "right"),
@@ -1037,6 +1043,7 @@ def test_resize_docks_horizontal(qapp):
     win.show()
 
     dock = _dock("d")
+    dock.setMinimumWidth(200)
     win.addDockWidget(LeftDockWidgetArea, dock)
 
     win.resizeDocks([dock], [200], Qt.Orientation.Horizontal)
@@ -1054,6 +1061,7 @@ def test_resize_docks_vertical(qapp):
     win.show()
 
     dock = _dock("d")
+    dock.setMinimumHeight(150)
     win.addDockWidget(TopDockWidgetArea, dock)
 
     win.resizeDocks([dock], [150], Qt.Orientation.Vertical)
@@ -1062,6 +1070,88 @@ def test_resize_docks_vertical(qapp):
     assert sizes[top_idx] == 150
 
     win.hide()
+
+
+def test_resize_docks_horizontal_matches_qt_with_constraints(qapp):
+    """resizeDocks honors horizontal min/max constraints like native Qt."""
+    native = NativeQMainWindow()
+    native.setCentralWidget(QLabel("center"))
+    native_left = _native_dock("native_left")
+    native_left.setMinimumWidth(100)
+    native_left.setMaximumWidth(150)
+    native_right = _native_dock("native_right")
+    native.addDockWidget(LeftDockWidgetArea, native_left)
+    native.addDockWidget(RightDockWidgetArea, native_right)
+    native.resize(800, 600)
+    native.show()
+    qapp.processEvents()
+
+    win = LMainWindow()
+    win.setCentralWidget(QLabel("center"))
+    dock_left = _dock("dock_left")
+    dock_left.setMinimumWidth(100)
+    dock_left.setMaximumWidth(150)
+    dock_right = _dock("dock_right")
+    win.addDockWidget(LeftDockWidgetArea, dock_left)
+    win.addDockWidget(RightDockWidgetArea, dock_right)
+    win.resize(800, 600)
+    win.show()
+    qapp.processEvents()
+
+    initial_right = dock_right.width()
+    native.resizeDocks([native_left], [400], Qt.Orientation.Horizontal)
+    win.resizeDocks([dock_left], [400], Qt.Orientation.Horizontal)
+    qapp.processEvents()
+    assert dock_left.width() == native_left.width()
+    assert dock_right.width() == initial_right
+
+    grown_width = dock_left.width()
+    native.resizeDocks([native_left], [20], Qt.Orientation.Horizontal)
+    win.resizeDocks([dock_left], [20], Qt.Orientation.Horizontal)
+    qapp.processEvents()
+    assert dock_left.width() < grown_width
+    assert dock_left.width() >= dock_left.minimumWidth()
+    assert dock_right.width() == initial_right
+
+
+def test_resize_docks_vertical_matches_qt_with_constraints(qapp):
+    """resizeDocks honors vertical min/max constraints like native Qt."""
+    native = NativeQMainWindow()
+    native.setCentralWidget(QLabel("center"))
+    native_top = _native_dock("native_top")
+    native_top.setMinimumHeight(90)
+    native_top.setMaximumHeight(130)
+    native_bottom = _native_dock("native_bottom")
+    native.addDockWidget(TopDockWidgetArea, native_top)
+    native.addDockWidget(BottomDockWidgetArea, native_bottom)
+    native.resize(800, 600)
+    native.show()
+    qapp.processEvents()
+
+    win = LMainWindow()
+    win.setCentralWidget(QLabel("center"))
+    dock_top = _dock("dock_top")
+    dock_top.setMinimumHeight(90)
+    dock_top.setMaximumHeight(130)
+    dock_bottom = _dock("dock_bottom")
+    win.addDockWidget(TopDockWidgetArea, dock_top)
+    win.addDockWidget(BottomDockWidgetArea, dock_bottom)
+    win.resize(800, 600)
+    win.show()
+    qapp.processEvents()
+
+    initial_bottom = dock_bottom.height()
+    native.resizeDocks([native_top], [300], Qt.Orientation.Vertical)
+    win.resizeDocks([dock_top], [300], Qt.Orientation.Vertical)
+    qapp.processEvents()
+    assert dock_top.height() == native_top.height()
+    assert dock_bottom.height() == initial_bottom
+
+    native.resizeDocks([native_top], [20], Qt.Orientation.Vertical)
+    win.resizeDocks([dock_top], [20], Qt.Orientation.Vertical)
+    qapp.processEvents()
+    assert dock_top.height() == native_top.height()
+    assert dock_bottom.height() == initial_bottom
 
 
 # ------------------------------------------------------------------

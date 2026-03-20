@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QWidget,
 )
+from .stylesheet_compat import translate_stylesheet
 
 
 class LTitleBar(QWidget):
@@ -39,6 +40,7 @@ class LTitleBar(QWidget):
         self._press_target: QWidget | None = None
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("class", "QDockWidgetTitle")
         self.setObjectName("dockTitleBar")
         self._build_ui()
 
@@ -52,6 +54,9 @@ class LTitleBar(QWidget):
 
     def title(self) -> str:
         return self._title
+
+    def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
+        super().setStyleSheet(translate_stylesheet(styleSheet))
 
     def set_vertical(self, vertical: bool) -> None:
         """Switch between horizontal and vertical layout."""
@@ -94,6 +99,8 @@ class LTitleBar(QWidget):
         btn_size = QSize(icon_size, icon_size)
 
         self._float_btn = QToolButton()
+        self._float_btn.setObjectName("dockFloatButton")
+        self._float_btn.setProperty("class", "QDockWidgetFloatButton")
         self._float_btn.setFixedSize(btn_size)
         self._float_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton)
@@ -102,6 +109,8 @@ class LTitleBar(QWidget):
         self._float_btn.clicked.connect(self.float_requested)
 
         self._close_btn = QToolButton()
+        self._close_btn.setObjectName("dockCloseButton")
+        self._close_btn.setProperty("class", "QDockWidgetCloseButton")
         self._close_btn.setFixedSize(btn_size)
         self._close_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton)
@@ -178,7 +187,7 @@ class LTitleBar(QWidget):
             )
 
     def sizeHint(self) -> QSize:
-        if self._vertical:
+        if getattr(self, "_vertical", False):
             sh = super().sizeHint()
             return QSize(sh.height(), sh.width())
         return super().sizeHint()

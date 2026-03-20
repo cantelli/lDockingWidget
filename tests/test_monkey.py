@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 import PySide6.QtWidgets as _qw
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
 
 import ldocking.monkey as monkey
 from ldocking import LDockWidget, LMainWindow
@@ -77,6 +78,12 @@ def test_unpatch_restores_qdockwidget(qapp):
     orig = monkey._ORIG["QDockWidget"]
     monkey.unpatch()
     assert _qw.QDockWidget is orig
+
+
+def test_unpatch_restores_qapplication_setstylesheet(qapp):
+    orig = monkey._ORIG["QApplication.setStyleSheet"]
+    monkey.unpatch()
+    assert _qw.QApplication.setStyleSheet is orig
 
 
 # ------------------------------------------------------------------
@@ -178,3 +185,45 @@ def test_fixture_imported_before_patch_keeps_native_bindings(qapp):
     assert type(win) is monkey._ORIG["QMainWindow"]
     assert all(type(dock) is monkey._ORIG["QDockWidget"] for dock in win.findChildren(monkey._ORIG["QDockWidget"]))
     win.close()
+
+
+def test_qapplication_stylesheet_translates_qdockwidget_selector_when_patched(qapp):
+    qapp.setStyleSheet(
+        "QDockWidget { background: rgb(180,0,40); }"
+        "QDockWidget::title { background: transparent; }"
+        "QDockWidget > QWidget { background: transparent; }"
+    )
+    try:
+        from PySide6.QtWidgets import QMainWindow, QDockWidget
+
+        win = QMainWindow()
+        dock = QDockWidget("Dock")
+        dock.setWidget(QLabel("Dock"))
+        win.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        win.show()
+        qapp.processEvents()
+
+        edge = dock.grab(dock.rect()).toImage().pixelColor(2, dock.height() // 2)
+        assert edge.red() > 150 and edge.green() < 80 and edge.blue() < 80
+        win.close()
+    finally:
+        qapp.setStyleSheet("")
+
+
+def test_qapplication_stylesheet_translation_disabled_after_unpatch(qapp):
+    monkey.unpatch()
+    qapp.setStyleSheet("QDockWidget::title { background: rgb(1,2,3); }")
+    try:
+        win = LMainWindow()
+        dock = LDockWidget("Dock")
+        dock.setWidget(QLabel("Dock"))
+        win.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        win.show()
+        qapp.processEvents()
+
+        color = dock._title_bar.palette().window().color()
+        assert (color.red(), color.green(), color.blue()) != (1, 2, 3)
+        win.close()
+    finally:
+        qapp.setStyleSheet("")
+        monkey.patch()

@@ -49,6 +49,7 @@ from .ldock_widget import LDockWidget
 from .ldrag_manager import LDragManager
 from .ldrop_indicator import LDropIndicator
 from .lmain_window import LMainWindow
+from .stylesheet_compat import translate_stylesheet
 from .ltitle_bar import LTitleBar
 
 __all__ = [
@@ -59,6 +60,7 @@ __all__ = [
     "LDragManager",
     "LDropIndicator",
     "LTitleBar",
+    "translate_stylesheet",
     # DockWidgetFeature enums
     "DockWidgetFeature",
     "DockWidgetClosable",

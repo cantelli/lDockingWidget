@@ -25,14 +25,20 @@ import PySide6.QtWidgets as _qw
 
 from .ldock_widget import LDockWidget
 from .lmain_window import LMainWindow
+from .stylesheet_compat import translate_stylesheet
 
 # Capture originals at module load time — never overwritten by patch/unpatch
 _ORIG: dict[str, type] = {
     "QMainWindow": _qw.QMainWindow,
     "QDockWidget": _qw.QDockWidget,
+    "QApplication.setStyleSheet": _qw.QApplication.setStyleSheet,
 }
 
 _patched = False
+
+
+def _compat_set_style_sheet(self, styleSheet: str) -> None:
+    _ORIG["QApplication.setStyleSheet"](self, translate_stylesheet(styleSheet))
 
 
 def patch() -> None:
@@ -40,6 +46,7 @@ def patch() -> None:
     global _patched
     _qw.QMainWindow = LMainWindow  # type: ignore[attr-defined]
     _qw.QDockWidget = LDockWidget  # type: ignore[attr-defined]
+    _qw.QApplication.setStyleSheet = _compat_set_style_sheet  # type: ignore[assignment]
     _patched = True
 
 
@@ -48,6 +55,7 @@ def unpatch() -> None:
     global _patched
     _qw.QMainWindow = _ORIG["QMainWindow"]  # type: ignore[attr-defined]
     _qw.QDockWidget = _ORIG["QDockWidget"]  # type: ignore[attr-defined]
+    _qw.QApplication.setStyleSheet = _ORIG["QApplication.setStyleSheet"]  # type: ignore[assignment]
     _patched = False
 
 

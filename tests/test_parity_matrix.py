@@ -184,3 +184,50 @@ def test_constrained_tabified_dock_size_parity(qapp):
     qapp.processEvents()
 
     assert (l_first.width(), l_second.width()) == (qt_first.width(), qt_second.width())
+
+
+def test_resize_docks_constraint_parity(qapp):
+    native = NativeQMainWindow()
+    native.setCentralWidget(QWidget())
+    qt_left = NativeQDockWidget("left")
+    qt_left.setObjectName("left")
+    qt_left.setWidget(QLabel("left"))
+    qt_left.setMinimumWidth(100)
+    qt_left.setMaximumWidth(150)
+    qt_right = NativeQDockWidget("right")
+    qt_right.setObjectName("right")
+    qt_right.setWidget(QLabel("right"))
+    native.addDockWidget(Left, qt_left)
+    native.addDockWidget(Right, qt_right)
+    native.resize(800, 600)
+    native.show()
+    qapp.processEvents()
+
+    l_win = LMainWindow()
+    l_win.setCentralWidget(QWidget())
+    l_left = LDockWidget("left")
+    l_left.setObjectName("left")
+    l_left.setWidget(QLabel("left"))
+    l_left.setMinimumWidth(100)
+    l_left.setMaximumWidth(150)
+    l_right = LDockWidget("right")
+    l_right.setObjectName("right")
+    l_right.setWidget(QLabel("right"))
+    l_win.addDockWidget(Left, l_left)
+    l_win.addDockWidget(Right, l_right)
+    l_win.resize(800, 600)
+    l_win.show()
+    qapp.processEvents()
+
+    right_before = l_right.width()
+    native.resizeDocks([qt_left], [400], Qt.Horizontal)
+    l_win.resizeDocks([l_left], [400], Qt.Horizontal)
+    qapp.processEvents()
+    assert l_left.width() == qt_left.width()
+    assert l_right.width() == right_before
+
+    native.resizeDocks([qt_left], [20], Qt.Horizontal)
+    l_win.resizeDocks([l_left], [20], Qt.Horizontal)
+    qapp.processEvents()
+    assert l_left.width() == qt_left.width()
+    assert l_right.width() == right_before

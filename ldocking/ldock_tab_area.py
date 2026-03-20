@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QWidget,
 )
+from .stylesheet_compat import translate_stylesheet
 
 if TYPE_CHECKING:
     from .ldock_widget import LDockWidget
@@ -73,6 +74,7 @@ class LDockTabArea(QWidget):
 
     def __init__(self, parent: QWidget | None = None, vertical_tabs: bool = False) -> None:
         super().__init__(parent)
+        self.setProperty("class", "QDockTabArea")
         self._docks: list[LDockWidget] = []
         self._title_connections: dict = {}
         self._grouped_dragging = False
@@ -116,6 +118,9 @@ class LDockTabArea(QWidget):
             )
             self._title_connections[dock] = conn
         self._sync_visibility()
+
+    def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
+        super().setStyleSheet(translate_stylesheet(styleSheet))
 
     def remove_dock(self, dock: LDockWidget) -> None:
         if dock not in self._docks:

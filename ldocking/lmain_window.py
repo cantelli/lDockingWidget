@@ -41,6 +41,7 @@ from .enums import (
     VerticalTabs,
 )
 from .ldock_area import LDockArea
+from .stylesheet_compat import translate_stylesheet
 
 if TYPE_CHECKING:
     from .ldock_widget import LDockWidget
@@ -103,6 +104,7 @@ class LMainWindow(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("class", "QMainWindow")
         self._central_widget: QWidget | None = None
         self._menu_bar: QWidget | None = None
         self._status_bar: QStatusBar | None = None
@@ -336,6 +338,26 @@ class LMainWindow(QWidget):
             if side in (LeftDockWidgetArea, TopDockWidgetArea):
                 return _SplitTree(orientation, [leaf, node])
             return _SplitTree(orientation, [node, leaf])
+
+        # Top-level side-area insertion around the central widget should wrap the
+        # whole existing root when the requested orientation changes. This matches
+        # Qt's shell policy where, for example, a bottom dock spans the full width
+        # beneath existing left/right side docks rather than only beneath central.
+        if target_key == "central":
+            if node.orientation != orientation:
+                if side in (LeftDockWidgetArea, TopDockWidgetArea):
+                    return _SplitTree(orientation, [leaf, node])
+                return _SplitTree(orientation, [node, leaf])
+            if self._subtree_contains_key(node, target_key):
+                central_index = self._child_index_containing_key(node, target_key)
+                if central_index is not None:
+                    insert_at = (
+                        central_index
+                        if side in (LeftDockWidgetArea, TopDockWidgetArea)
+                        else central_index + 1
+                    )
+                    node.children.insert(insert_at, leaf)
+                    return node
 
         central_index = self._child_index_containing_key(node, target_key)
         if central_index is None:
@@ -1072,6 +1094,9 @@ class LMainWindow(QWidget):
     def centralWidget(self) -> QWidget | None:
         return self._central_widget
 
+    def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
+        super().setStyleSheet(translate_stylesheet(styleSheet))
+
     def _area_for_dock(self, dock: LDockWidget) -> Qt.DockWidgetArea:
         for area, area_obj in self._dock_areas.items():
             if area_obj.contains(dock):
@@ -1258,16 +1283,9 @@ class LMainWindow(QWidget):
         )
         if splitter is None:
             return
-        current = splitter.sizes()
+        current = self._splitter_live_extents(splitter, orientation)
         if not current:
             return
-        total = sum(current)
-        if total <= 0:
-            total = (
-                splitter.size().width()
-                if orientation == Qt.Orientation.Horizontal
-                else splitter.size().height()
-            )
         requested: dict[int, int] = {}
         for dock, size in zip(docks, sizes):
             area = self._area_for_dock(dock)
@@ -1275,26 +1293,103 @@ class LMainWindow(QWidget):
                 continue
             idx = splitter.indexOf(self._dock_areas[area])
             if 0 <= idx < len(current):
-                requested[idx] = size
+                requested[idx] = self._clamp_resize_dock_extent(
+                    self._dock_areas[area],
+                    size,
+                    orientation,
+                )
         if not requested:
             return
-        remainder_indices = [idx for idx in range(len(current)) if idx not in requested]
-        remaining = max(0, total - sum(requested.values()))
-        if remainder_indices:
-            base, extra = divmod(remaining, len(remainder_indices))
-            for offset, idx in enumerate(remainder_indices):
-                current[idx] = base + (1 if offset < extra else 0)
         for idx, size in requested.items():
             current[idx] = size
         splitter.setSizes(current)
         if splitter is self._outer_splitter:
             outer = self._find_split(self._content_tree, "outer")
             if outer is not None:
-                outer.sizes = splitter.sizes()
+                outer.sizes = list(current)
         if splitter is self._inner_splitter:
             inner = self._find_split(self._content_tree, "inner")
             if inner is not None:
-                inner.sizes = splitter.sizes()
+                inner.sizes = list(current)
+
+    def _splitter_live_extents(
+        self,
+        splitter: QSplitter,
+        orientation: Qt.Orientation,
+    ) -> list[int]:
+        extents: list[int] = []
+        for idx in range(splitter.count()):
+            widget = splitter.widget(idx)
+            if widget is None:
+                extents.append(0)
+            elif orientation == Qt.Orientation.Horizontal:
+                extents.append(widget.width())
+            else:
+                extents.append(widget.height())
+        return extents
+
+    def _clamp_resize_dock_extent(
+        self,
+        area_widget: QWidget,
+        requested: int,
+        orientation: Qt.Orientation,
+    ) -> int:
+        minimum, maximum = self._effective_area_extent_bounds(area_widget, orientation)
+        return max(minimum, min(int(requested), maximum))
+
+    def _effective_area_extent_bounds(
+        self,
+        area_widget: QWidget,
+        orientation: Qt.Orientation,
+    ) -> tuple[int, int]:
+        if not isinstance(area_widget, LDockArea) or area_widget._root is None:
+            if orientation == Qt.Orientation.Horizontal:
+                minimum = max(area_widget.minimumWidth(), area_widget.minimumSizeHint().width())
+                maximum = area_widget.maximumWidth()
+            else:
+                minimum = max(area_widget.minimumHeight(), area_widget.minimumSizeHint().height())
+                maximum = area_widget.maximumHeight()
+            return minimum, maximum if maximum < 16777215 else 16777215
+        return self._node_extent_bounds(area_widget._root, orientation)
+
+    def _node_extent_bounds(
+        self,
+        node: object,
+        orientation: Qt.Orientation,
+    ) -> tuple[int, int]:
+        if hasattr(node, "dock"):
+            dock = node.dock
+            minimum = dock.minimumSizeHint().expandedTo(dock.minimumSize())
+            maximum = dock.maximumSize()
+            if orientation == Qt.Orientation.Horizontal:
+                return minimum.width(), maximum.width()
+            return minimum.height(), maximum.height()
+
+        if hasattr(node, "docks"):
+            mins: list[int] = []
+            maxs: list[int] = []
+            for dock in node.docks:
+                minimum = dock.minimumSizeHint().expandedTo(dock.minimumSize())
+                maximum = dock.maximumSize()
+                if orientation == Qt.Orientation.Horizontal:
+                    mins.append(minimum.width())
+                    maxs.append(maximum.width())
+                else:
+                    mins.append(minimum.height())
+                    maxs.append(maximum.height())
+            if not mins:
+                return 0, 16777215
+            return min(mins), max(maxs)
+
+        if hasattr(node, "children") and hasattr(node, "orientation"):
+            child_bounds = [self._node_extent_bounds(child, orientation) for child in node.children]
+            if not child_bounds:
+                return 0, 16777215
+            if node.orientation == orientation:
+                return sum(bound[0] for bound in child_bounds), sum(bound[1] for bound in child_bounds)
+            return max(bound[0] for bound in child_bounds), max(bound[1] for bound in child_bounds)
+
+        return 0, 16777215
 
     def _find_split(self, node: object, key: str) -> _SplitTree | None:
         if isinstance(node, _SplitTree):

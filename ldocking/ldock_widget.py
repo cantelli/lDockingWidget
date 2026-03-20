@@ -35,6 +35,7 @@ from .enums import (
     RightDockWidgetArea,
     TopDockWidgetArea,
 )
+from .stylesheet_compat import translate_stylesheet
 from .ltitle_bar import LTitleBar
 
 if TYPE_CHECKING:
@@ -91,6 +92,7 @@ class LDockWidget(QWidget):
     def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("class", "QDockWidget")
         self._title = title
         self._content_widget: QWidget | None = None
         self._custom_title_bar: QWidget | None = None
@@ -201,6 +203,9 @@ class LDockWidget(QWidget):
 
     def windowTitle(self) -> str:
         return self._title
+
+    def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
+        super().setStyleSheet(translate_stylesheet(styleSheet))
 
     def toggleViewAction(self) -> QAction:
         if self._toggle_action is None:
@@ -415,7 +420,7 @@ class LDockWidget(QWidget):
         self._sync_toggle_action_checked()
 
     def _sync_toggle_action_checked(self) -> None:
-        if self._toggle_action is None:
+        if not hasattr(self, "_toggle_action") or self._toggle_action is None:
             return
         checked = self._toggle_action_checked_value()
         if self._toggle_action.isChecked() == checked:
