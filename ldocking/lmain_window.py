@@ -187,9 +187,7 @@ class LMainWindow(QWidget):
         self._inner_splitter: QSplitter | None = None
         self._rebuild_content_tree()
 
-        self._status_bar_widget = QStatusBar()
-        self._root_layout.addWidget(self._status_bar_widget)
-        self._status_bar = self._status_bar_widget
+        self._status_bar: QStatusBar | None = None
         self._apply_corner_ownership()
 
     def _rebuild_content_tree(self) -> None:
@@ -1769,7 +1767,12 @@ class LMainWindow(QWidget):
         self._apply_corner_ownership()
 
     def statusBar(self) -> QStatusBar:
-        return self._status_bar  # type: ignore[return-value]
+        if self._status_bar is None:
+            bar = QStatusBar(self)
+            bar.setSizeGripEnabled(True)
+            self._status_bar = bar
+            self._root_layout.addWidget(bar)
+        return self._status_bar
 
     def setStatusBar(self, status_bar: QStatusBar) -> None:
         if self._status_bar is not None:

@@ -363,6 +363,10 @@ class LDockArea(QWidget):
             return tab_area
 
         split = QSplitter(node.orientation, parent)
+        sep = self.style().pixelMetric(
+            self.style().PixelMetric.PM_DockWidgetSeparatorExtent, None, self
+        )
+        split.setHandleWidth(sep)
         for child in node.children:
             split.addWidget(self._build_widget(child, split))
         if node.sizes:

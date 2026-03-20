@@ -88,6 +88,7 @@ class LDockTabArea(QWidget):
         self._layout.setSpacing(0)
 
         self._tab_bar = LTearOffTabBar(self)
+        self._tab_bar.setObjectName("dockTabBar")
         self._tab_bar.currentChanged.connect(self._on_tab_changed)
         self._tab_bar.tabMoved.connect(self._on_tab_moved)
         self._layout.addWidget(self._tab_bar)
