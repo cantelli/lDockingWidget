@@ -63,6 +63,7 @@ class LDockArea(QWidget):
         self._insertion_order: dict[LDockWidget, int] = {}
         self._dock_to_node: dict[LDockWidget, object] = {}
         self._node_tab_areas: dict[int, LDockTabArea] = {}
+        self._needs_initial_sizes: bool = False
 
         self._vertical = area_side in (
             Qt.DockWidgetArea.LeftDockWidgetArea,
@@ -100,6 +101,47 @@ class LDockArea(QWidget):
             return QSize(max(base.width(), w), base.height())
         h = max(d.sizeHint().height() for d in docks)
         return QSize(base.width(), max(base.height(), h))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if getattr(self, '_needs_initial_sizes', False):
+            self._needs_initial_sizes = False
+            self._apply_initial_sizes()
+
+    def _apply_initial_sizes(self) -> None:
+        """Set initial split sizes to approximate Qt QDockAreaLayout behavior.
+
+        Qt gives child 0 the majority of space and each remaining child a
+        proportional share of roughly half the available space — empirically
+        derived from comparing Qt vs ldocking screenshots at 760×720.
+
+        Skipped if sizes were restored from saved state.
+        """
+        split = self._split_area
+        if split is None or split.count() < 2:
+            return
+        if getattr(split, '_ldk_has_explicit_sizes', True):
+            return
+        is_vert = split.orientation() == Qt.Orientation.Vertical
+        # Use the dock area's own dimensions: the inner split fills it completely
+        # via QVBoxLayout and may not yet have propagated its own size.
+        total = self.height() if is_vert else self.width()
+        if total <= 0:
+            return
+        handles = split.handleWidth() * (split.count() - 1)
+        available = total - handles
+        if is_vert:
+            hints = [max(split.widget(i).sizeHint().height(), 1)
+                     for i in range(split.count())]
+        else:
+            hints = [max(split.widget(i).sizeHint().width(), 1)
+                     for i in range(split.count())]
+        sum_hints = max(sum(hints), 1)
+        # Each "other" (non-primary) child gets its proportional share of half
+        # the available space, matching empirical Qt QDockAreaLayout output.
+        others = [max(h * available // (2 * sum_hints), 1) for h in hints[1:]]
+        primary = max(available - sum(others), 1)
+        split.setSizes([primary] + others)
 
     def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
         super().setStyleSheet(translate_stylesheet(styleSheet))
@@ -328,6 +370,13 @@ class LDockArea(QWidget):
         self._sync_flat_state()
         self.show()
 
+        if self._split_area is not None and self._split_area.count() > 1:
+            if self.isVisible():
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, self._apply_initial_sizes)
+            else:
+                self._needs_initial_sizes = True
+
     def _detach_docks(self) -> None:
         for dock in self._docks:
             if dock.parent() is not None:
@@ -386,9 +435,10 @@ class LDockArea(QWidget):
             split.addWidget(self._build_widget(child, split))
         if node.sizes:
             split.setSizes(node.sizes)
+            split._ldk_has_explicit_sizes = True
         else:
-            for i in range(split.count()):
-                split.setStretchFactor(i, 1)
+            split.setStretchFactor(0, 1)
+            split._ldk_has_explicit_sizes = False
         if self._root is node:
             self._split_area = split
         return split

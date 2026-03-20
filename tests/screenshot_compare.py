@@ -253,6 +253,113 @@ def capture_all(outdir: str, app: QApplication) -> list[tuple[str, float]]:
     return results
 
 
+def capture_float_redock_states(outdir: str, app: QApplication) -> list[tuple[str, float]]:
+    """Capture float and redock states. Returns [(name, score), ...]."""
+    from visual_compare_demo import QtComparisonPane, LDockingComparisonPane
+
+    results: list[tuple[str, float]] = []
+    os.makedirs(outdir, exist_ok=True)
+
+    layout_name = "Balanced"
+
+    qt_pane = QtComparisonPane()
+    l_pane = LDockingComparisonPane()
+    qt_pane.resize(PANE_SIZE)
+    l_pane.resize(PANE_SIZE)
+    qt_pane.show()
+    l_pane.show()
+    for _ in range(6):
+        app.processEvents()
+
+    qt_pane.apply_layout(layout_name)
+    l_pane.apply_layout(layout_name)
+    for _ in range(6):
+        app.processEvents()
+
+    _equalize_pane_sizes(qt_pane, l_pane, layout_name, app)
+
+    # --- State 1: After floating Inspector ---
+    print("  Capturing: float_main ...", end=" ", flush=True)
+    qt_pane.float_first()
+    l_pane.float_first()
+    for _ in range(6):
+        app.processEvents()
+
+    img_qt_main = qt_pane.window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    img_l_main = l_pane.window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    diff_main = _make_diff_image(img_qt_main, img_l_main)
+    composite_main = _make_side_by_side(img_qt_main, img_l_main, diff_main, "float_main")
+    QPixmap.fromImage(img_qt_main).save(os.path.join(outdir, "float_main_qt.png"))
+    QPixmap.fromImage(img_l_main).save(os.path.join(outdir, "float_main_l.png"))
+    QPixmap.fromImage(composite_main).save(os.path.join(outdir, "float_main_side_by_side.png"))
+    score_main = _avg_image_diff(img_qt_main, img_l_main)
+    results.append(("float_main", score_main))
+    print(f"diff={score_main:.2f}")
+
+    # Grab the floating dock itself
+    print("  Capturing: float_dock ...", end=" ", flush=True)
+    qt_dock_img = qt_pane.docks[0].grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    l_dock_img = l_pane.docks[0].grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    diff_dock = _make_diff_image(qt_dock_img, l_dock_img)
+    composite_dock = _make_side_by_side(qt_dock_img, l_dock_img, diff_dock, "float_dock")
+    QPixmap.fromImage(qt_dock_img).save(os.path.join(outdir, "float_dock_qt.png"))
+    QPixmap.fromImage(l_dock_img).save(os.path.join(outdir, "float_dock_l.png"))
+    QPixmap.fromImage(composite_dock).save(os.path.join(outdir, "float_dock_side_by_side.png"))
+    score_dock = _avg_image_diff(qt_dock_img, l_dock_img)
+    results.append(("float_dock", score_dock))
+    print(f"diff={score_dock:.2f}  (expected: large — different chrome by design)")
+
+    # --- State 2: After redocking Inspector ---
+    print("  Capturing: redock ...", end=" ", flush=True)
+    qt_pane.docks[0].setFloating(False)
+    l_pane.docks[0].setFloating(False)
+    for _ in range(8):
+        app.processEvents()
+
+    img_qt_redock = qt_pane.window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    img_l_redock = l_pane.window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    diff_redock = _make_diff_image(img_qt_redock, img_l_redock)
+    composite_redock = _make_side_by_side(img_qt_redock, img_l_redock, diff_redock, "redock")
+    QPixmap.fromImage(img_qt_redock).save(os.path.join(outdir, "redock_qt.png"))
+    QPixmap.fromImage(img_l_redock).save(os.path.join(outdir, "redock_l.png"))
+    QPixmap.fromImage(composite_redock).save(os.path.join(outdir, "redock_side_by_side.png"))
+    score_redock = _avg_image_diff(img_qt_redock, img_l_redock)
+    results.append(("redock", score_redock))
+    print(f"diff={score_redock:.2f}")
+
+    qt_pane.hide()
+    l_pane.hide()
+    qt_pane.deleteLater()
+    l_pane.deleteLater()
+    app.processEvents()
+
+    return results
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", default=os.path.join(os.path.dirname(__file__), "screenshots"))
@@ -261,6 +368,7 @@ def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
 
     results = capture_all(args.outdir, app)
+    results += capture_float_redock_states(args.outdir, app)
 
     print()
     print("=" * 48)

@@ -344,7 +344,28 @@ class LDockWidget(QWidget):
             self._outer_layout.removeWidget(self._size_grip)
             self._size_grip.hide()
 
-        self._main_window.addDockWidget(area, self)
+        hint = getattr(self, "_pre_float_restore_hint", None)
+        mode = hint.get("restore_mode") if hint else None
+        target_id = hint.get("restore_target_id") if hint else None
+        restore_side = None
+        if hint and hint.get("restore_side") is not None:
+            try:
+                restore_side = Qt.DockWidgetArea(int(hint["restore_side"]))
+            except (TypeError, ValueError):
+                restore_side = None
+        target_available = (
+            isinstance(target_id, str)
+            and self._main_window._state_contains_id(
+                self._main_window._area_state(area), target_id
+            )
+        )
+        if mode in {"tab", "side"} and target_available:
+            self._main_window._drop_docks(
+                area, [self], mode=mode, target_id=target_id, side=restore_side,
+            )
+            self.dockLocationChanged.emit(area)
+        else:
+            self._main_window.addDockWidget(area, self)
         self._title_bar.set_float_button_icon(False)
         if self._main_window is not None:
             self._main_window.raise_()
