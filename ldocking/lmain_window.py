@@ -1299,8 +1299,24 @@ class LMainWindow(QWidget):
                 )
         if not requested:
             return
+        # Apply requested sizes and compensate only through the "central" child
+        # (the non-LDockArea child — inner_splitter for outer, outer_splitter for
+        # inner).  This matches Qt's resizeDocks behaviour: resizing a dock area
+        # does not change any other dock area, only the elastic central region.
+        total = sum(current)
         for idx, size in requested.items():
             current[idx] = size
+        delta = sum(current) - total
+        if delta != 0:
+            central_indices = [
+                i for i in range(len(current))
+                if i not in requested and not isinstance(splitter.widget(i), LDockArea)
+            ]
+            if central_indices:
+                per = delta // len(central_indices)
+                remainder = delta - per * len(central_indices)
+                for k, i in enumerate(central_indices):
+                    current[i] = max(0, current[i] - per - (remainder if k == 0 else 0))
         splitter.setSizes(current)
         if splitter is self._outer_splitter:
             outer = self._find_split(self._content_tree, "outer")
