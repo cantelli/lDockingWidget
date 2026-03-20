@@ -1067,3 +1067,221 @@ def test_wa_styled_background_on_ldock(qapp):
         f"LDockWidget must show red due to WA_StyledBackground; got {color}"
     )
     dock.hide()
+
+
+# ------------------------------------------------------------------
+# Dark theme side-by-side parity
+# ------------------------------------------------------------------
+
+# A full dark theme written entirely with legacy QMainWindow/QDockWidget
+# selectors.  translate_stylesheet() converts these when applied to L*
+# widgets; the same stylesheet is applied verbatim to the Qt originals.
+_DARK_THEME_QSS = """
+    QMainWindow {
+        background: #1e1e2e;
+    }
+    QMainWindow::separator {
+        background: #313244;
+        width: 4px;
+        height: 4px;
+    }
+    QDockWidget {
+        background: #181825;
+        border: 1px solid #45475a;
+        color: #cdd6f4;
+    }
+    QDockWidget::title {
+        background: #313244;
+        color: #cdd6f4;
+        padding: 4px 8px;
+    }
+    QDockWidget > QWidget {
+        background: #181825;
+    }
+    QDockWidget::close-button {
+        background: transparent;
+    }
+    QDockWidget::float-button {
+        background: transparent;
+    }
+    QTabBar::tab {
+        background: #313244;
+        color: #cdd6f4;
+        padding: 4px 10px;
+        border: 1px solid #45475a;
+    }
+    QTabBar::tab:selected {
+        background: #45475a;
+        color: #cdd6f4;
+    }
+    QToolBar {
+        background: #313244;
+        border: 1px solid #45475a;
+        spacing: 2px;
+    }
+"""
+
+# Key dark-theme colors for assertions
+_DARK_BG = (24, 24, 37)        # #181825 — dock/content background
+_DARK_TITLE = (49, 50, 68)     # #313244 — title bar background
+_DARK_WINDOW = (30, 30, 46)    # #1e1e2e — main window background
+
+
+def test_dark_theme_title_bar_color_parity(qapp):
+    """Dark-theme title bar color matches between ldocking and Qt."""
+    qapp.setStyle("Fusion")
+    lmw, ldock = _make_l_window()
+    qtmw, qtdock = _make_qt_window()
+    lmw.setStyleSheet(translate_stylesheet(_DARK_THEME_QSS))
+    qtmw.setStyleSheet(_DARK_THEME_QSS)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    l_color = _sample(ldock._title_bar)
+    qt_title_rect = QRect(0, 0, qtdock.width(), qtdock.widget().geometry().y())
+    qt_color = _sample(qtdock, qt_title_rect)
+
+    assert _close(l_color, _DARK_TITLE), f"ldocking title bar color {l_color} != dark title {_DARK_TITLE}"
+    assert _close(qt_color, _DARK_TITLE), f"Qt title bar color {qt_color} != dark title {_DARK_TITLE}"
+    assert _close(l_color, qt_color), f"title bar color mismatch: ldocking={l_color} Qt={qt_color}"
+
+    lmw.hide()
+    qtmw.hide()
+
+
+def test_dark_theme_content_color_parity(qapp):
+    """Dark-theme dock content background matches between ldocking and Qt."""
+    qapp.setStyle("Fusion")
+    lmw, ldock = _make_l_window()
+    qtmw, qtdock = _make_qt_window()
+    lmw.setStyleSheet(translate_stylesheet(_DARK_THEME_QSS))
+    qtmw.setStyleSheet(_DARK_THEME_QSS)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    title_h = ldock._title_bar.height()
+    l_content_rect = QRect(4, title_h + 4, ldock.width() - 8, ldock.height() - title_h - 8)
+    l_color = _sample(ldock, l_content_rect)
+
+    qt_content_geo = qtdock.widget().geometry()
+    qt_content_rect = QRect(
+        qt_content_geo.x() + 4,
+        qt_content_geo.y() + 4,
+        qt_content_geo.width() - 8,
+        qt_content_geo.height() - 8,
+    )
+    qt_color = _sample(qtdock, qt_content_rect)
+
+    assert _close(l_color, _DARK_BG), f"ldocking content color {l_color} != dark bg {_DARK_BG}"
+    assert _close(qt_color, _DARK_BG), f"Qt content color {qt_color} != dark bg {_DARK_BG}"
+    assert _close(l_color, qt_color), f"content color mismatch: ldocking={l_color} Qt={qt_color}"
+
+    lmw.hide()
+    qtmw.hide()
+
+
+def test_dark_theme_window_background_color_parity(qapp):
+    """Dark-theme main window background matches between ldocking and Qt."""
+    qapp.setStyle("Fusion")
+    lmw, _ = _make_l_window()
+    qtmw, _ = _make_qt_window()
+    lmw.resize(600, 400)
+    qtmw.resize(600, 400)
+    lmw.setStyleSheet(translate_stylesheet(_DARK_THEME_QSS))
+    qtmw.setStyleSheet(_DARK_THEME_QSS)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    # Sample a corner region that should be pure window background
+    corner = QRect(lmw.width() - 40, 10, 30, 30)
+    l_color = _sample(lmw, corner)
+
+    qt_corner = QRect(qtmw.width() - 40, 10, 30, 30)
+    qt_color = _sample(qtmw, qt_corner)
+
+    assert _close(l_color, _DARK_WINDOW), f"ldocking window bg {l_color} != dark window {_DARK_WINDOW}"
+    assert _close(qt_color, _DARK_WINDOW), f"Qt window bg {qt_color} != dark window {_DARK_WINDOW}"
+    assert _close(l_color, qt_color), f"window bg mismatch: ldocking={l_color} Qt={qt_color}"
+
+    lmw.hide()
+    qtmw.hide()
+
+
+def test_dark_theme_screenshot_parity_single_dock(qapp):
+    """Single-dock layout under dark theme stays visually close to Qt."""
+    qapp.setStyle("Fusion")
+    lmw, _ = _make_l_window()
+    qtmw, _ = _make_qt_window()
+    lmw.setStyleSheet(translate_stylesheet(_DARK_THEME_QSS))
+    qtmw.setStyleSheet(_DARK_THEME_QSS)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    diff = _avg_image_diff(lmw.grab().toImage(), qtmw.grab().toImage())
+    assert diff <= IMAGE_DIFF_TOL, f"dark theme screenshot diff {diff:.2f} > {IMAGE_DIFF_TOL}"
+
+    lmw.hide()
+    qtmw.hide()
+
+
+def test_dark_theme_screenshot_parity_tabbed(qapp):
+    """Tabbed dock layout under dark theme stays visually close to Qt."""
+    qapp.setStyle("Fusion")
+    lmw, _ = _make_l_tabbed_window(3)
+    qtmw, _ = _make_qt_tabbed_window(3)
+    lmw.setStyleSheet(translate_stylesheet(_DARK_THEME_QSS))
+    qtmw.setStyleSheet(_DARK_THEME_QSS)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    diff = _avg_image_diff(lmw.grab().toImage(), qtmw.grab().toImage())
+    assert diff <= IMAGE_DIFF_TOL, f"dark theme tabbed screenshot diff {diff:.2f} > {IMAGE_DIFF_TOL}"
+
+    lmw.hide()
+    qtmw.hide()
+
+
+def test_dark_theme_screenshot_parity_multi_dock(qapp):
+    """Multi-side dock layout under dark theme stays visually close to Qt."""
+    qapp.setStyle("Fusion")
+
+    lmw = LMainWindow()
+    lmw.resize(640, 420)
+    lmw.setCentralWidget(QLabel("central"))
+    for title, area in (
+        ("Inspector", LeftDockWidgetArea),
+        ("Output", BottomDockWidgetArea),
+        ("Properties", RightDockWidgetArea),
+    ):
+        d = LDockWidget(title)
+        d.setWidget(QLabel(title))
+        lmw.addDockWidget(area, d)
+
+    qtmw = _RealQMainWindow()
+    qtmw.resize(640, 420)
+    qtmw.setCentralWidget(QLabel("central"))
+    for title, qt_area in (
+        ("Inspector", Qt.DockWidgetArea.LeftDockWidgetArea),
+        ("Output", Qt.DockWidgetArea.BottomDockWidgetArea),
+        ("Properties", Qt.DockWidgetArea.RightDockWidgetArea),
+    ):
+        d = _RealQDockWidget(title, qtmw)
+        d.setWidget(QLabel(title))
+        qtmw.addDockWidget(qt_area, d)
+
+    lmw.setStyleSheet(translate_stylesheet(_DARK_THEME_QSS))
+    qtmw.setStyleSheet(_DARK_THEME_QSS)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    diff = _avg_image_diff(lmw.grab().toImage(), qtmw.grab().toImage())
+    assert diff <= IMAGE_DIFF_TOL, f"dark theme multi-dock screenshot diff {diff:.2f} > {IMAGE_DIFF_TOL}"
+
+    lmw.hide()
+    qtmw.hide()
