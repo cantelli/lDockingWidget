@@ -263,6 +263,7 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
     def _post_layout(self, layout_name: str) -> None:
         if layout_name == "Nested Split" and len(self.docks) >= 3:
             self.window.setDockOptions(self.window.dockOptions() | LMainWindow.AllowNestedDocks)
+            self.window.tabifyDockWidget(self.docks[0], self.docks[1])
             self.window._drop_docks(
                 Left,
                 [self.docks[2]],
@@ -271,9 +272,8 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
                 side=Bottom,
             )
         elif layout_name == "Grouped Tabs" and len(self.docks) >= 3:
-            self.window.setDockOptions(
-                self.window.dockOptions() | LMainWindow.ForceTabbedDocks | LMainWindow.GroupedDragging
-            )
+            self.window.tabifyDockWidget(self.docks[0], self.docks[1])
+            self.window.tabifyDockWidget(self.docks[0], self.docks[2])
 
 
 class VisualCompareDemo(QWidget):

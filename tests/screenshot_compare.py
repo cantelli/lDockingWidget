@@ -186,6 +186,7 @@ def _build_l_window(layout_name: str) -> LMainWindow:
 
     if layout_name == "Nested Split" and len(docks) >= 3:
         win.setDockOptions(win.dockOptions() | LMainWindow.AllowNestedDocks)
+        win.tabifyDockWidget(docks[0], docks[1])
         win._drop_docks(
             Left,
             [docks[2]],
@@ -194,9 +195,8 @@ def _build_l_window(layout_name: str) -> LMainWindow:
             side=Bottom,
         )
     elif layout_name == "Grouped Tabs" and len(docks) >= 3:
-        win.setDockOptions(
-            win.dockOptions() | LMainWindow.ForceTabbedDocks | LMainWindow.GroupedDragging
-        )
+        win.tabifyDockWidget(docks[0], docks[1])
+        win.tabifyDockWidget(docks[0], docks[2])
 
     win.setStyleSheet(translate_stylesheet(PURE_QT_QSS))
     return win

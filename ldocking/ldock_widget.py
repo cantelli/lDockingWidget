@@ -282,13 +282,18 @@ class LDockWidget(QWidget):
             if self._main_window is not None:
                 self._main_window._sync_content_tree_to_areas()
 
-        self.setParent(None)
         flags = (
             Qt.WindowType.Tool
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
         )
-        self.setWindowFlags(flags)
+        # Keep the main window as the native owner of the Tool window.
+        # On Windows, a Tool window with no owner has no z-order relationship
+        # with the application and may disappear behind the main window.
+        if self._main_window is not None:
+            self.setParent(self._main_window, flags)
+        else:
+            self.setParent(None, flags)
         self.setWindowTitle(self._title)
 
         # Add size grip only when not already in layout
