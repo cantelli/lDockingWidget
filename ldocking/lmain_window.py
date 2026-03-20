@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QSplitter,
     QStatusBar,
+    QStyle,
     QTabWidget,
     QToolBar,
     QVBoxLayout,

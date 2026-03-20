@@ -185,15 +185,10 @@ def _build_l_window(layout_name: str) -> LMainWindow:
         docks.append(dock)
 
     if layout_name == "Nested Split" and len(docks) >= 3:
-        win.setDockOptions(win.dockOptions() | LMainWindow.AllowNestedDocks)
+        # Qt's splitDockWidget on a tabified dock actually tabs all three together.
+        # Mirror that behavior so layouts match.
         win.tabifyDockWidget(docks[0], docks[1])
-        win._drop_docks(
-            Left,
-            [docks[2]],
-            mode="side",
-            target_id=docks[0].windowTitle(),
-            side=Bottom,
-        )
+        win.tabifyDockWidget(docks[0], docks[2])
     elif layout_name == "Grouped Tabs" and len(docks) >= 3:
         win.tabifyDockWidget(docks[0], docks[1])
         win.tabifyDockWidget(docks[0], docks[2])
@@ -206,14 +201,22 @@ def _build_l_window(layout_name: str) -> LMainWindow:
 # Image diff helpers
 # ---------------------------------------------------------------------------
 
-def _avg_image_diff(img1: QImage, img2: QImage) -> float:
+def _avg_image_diff(img1: QImage, img2: QImage,
+                    x0: int = 0, y0: int = 0,
+                    x1: int | None = None, y1: int | None = None) -> float:
+    """Average per-channel pixel difference over an optional sub-region."""
     width = min(img1.width(), img2.width())
     height = min(img1.height(), img2.height())
-    if width <= 0 or height <= 0:
+    if x1 is None:
+        x1 = width
+    if y1 is None:
+        y1 = height
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(x1, width), min(y1, height)
+    if x1 <= x0 or y1 <= y0:
         return 255.0
     total = 0
-    for y in range(height):
-        for x in range(width):
+    for y in range(y0, y1):
+        for x in range(x0, x1):
             c1 = img1.pixelColor(x, y)
             c2 = img2.pixelColor(x, y)
             total += (
@@ -221,7 +224,23 @@ def _avg_image_diff(img1: QImage, img2: QImage) -> float:
                 + abs(c1.green() - c2.green())
                 + abs(c1.blue() - c2.blue())
             )
-    return total / (width * height * 3)
+    return total / ((x1 - x0) * (y1 - y0) * 3)
+
+
+def _region_scores(img_qt: QImage, img_l: QImage) -> dict[str, float]:
+    """Per-region diff scores to pinpoint where differences are."""
+    w, h = min(img_qt.width(), img_l.width()), min(img_qt.height(), img_l.height())
+    regions = {
+        "left ": (0,       0,       w // 4,     h),
+        "right": (3*w//4,  0,       w,          h),
+        "top  ": (0,       0,       w,          h // 5),
+        "bot  ": (0,       4*h//5,  w,          h),
+        "centr": (w // 4,  h // 5,  3*w // 4,   4*h // 5),
+    }
+    return {
+        name: _avg_image_diff(img_qt, img_l, x0, y0, x1, y1)
+        for name, (x0, y0, x1, y1) in regions.items()
+    }
 
 
 def _make_diff_image(img1: QImage, img2: QImage, scale: int = 5) -> QImage:
@@ -295,8 +314,8 @@ def main() -> None:
 
         qt_win.show()
         l_win.show()
-        app.processEvents()
-        app.processEvents()
+        for _ in range(6):
+            app.processEvents()
 
         img_qt = qt_win.grab().toImage().scaled(
             WINDOW_SIZE, Qt.AspectRatioMode.IgnoreAspectRatio,
@@ -315,8 +334,10 @@ def main() -> None:
         QPixmap.fromImage(composite).save(os.path.join(args.outdir, f"{slug}_side_by_side.png"))
 
         score = _avg_image_diff(img_qt, img_l)
+        regions = _region_scores(img_qt, img_l)
+        region_str = "  ".join(f"{k}={v:.1f}" for k, v in regions.items())
         results.append((layout_name, score))
-        print(f"diff={score:.2f}")
+        print(f"diff={score:.2f}  [{region_str}]")
 
         qt_win.hide()
         l_win.hide()

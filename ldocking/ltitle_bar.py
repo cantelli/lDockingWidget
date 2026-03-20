@@ -89,7 +89,7 @@ class LTitleBar(QWidget):
     def _build_ui(self) -> None:
         layout = QHBoxLayout(self)
         m = self.style().pixelMetric(QStyle.PixelMetric.PM_DockWidgetTitleMargin)
-        layout.setContentsMargins(m, 1, 1, 1)
+        layout.setContentsMargins(m, 2, 2, 2)
         layout.setSpacing(1)
 
         self._label = QLabel(self._title)

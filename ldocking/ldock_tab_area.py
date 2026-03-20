@@ -108,7 +108,6 @@ class LDockTabArea(QWidget):
         )
         self._docks.append(dock)
         self._stack.addWidget(dock)
-        dock._title_bar.hide()
         self._tab_bar.addTab(dock.windowTitle())
         self._hidden_docks.discard(dock)
         dock._explicitly_hidden = False
@@ -129,7 +128,6 @@ class LDockTabArea(QWidget):
         idx = self._docks.index(dock)
         self._docks.pop(idx)
         self._stack.removeWidget(dock)
-        dock._title_bar.show()
         dock._set_tabbed_visibility_override(None)
         dock._tab_visibility_sync = True
         dock.show()
