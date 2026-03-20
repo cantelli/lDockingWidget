@@ -1,18 +1,17 @@
-"""Headless screenshot capture + diff tool for Qt vs ldocking visual parity.
+"""Screenshot capture + diff tool for Qt vs ldocking visual parity.
 
 Usage:
     python tests/screenshot_compare.py [--outdir tests/screenshots]
 
-For each demo mode (Single Left, Tabbed Left, Grouped Tabs, Balanced,
-Nested Split, Full Frame) this script:
-  - Creates Qt QMainWindow + docks and LMainWindow + LDockWidgets
-  - Applies an identical stylesheet using ONLY legacy Qt selectors
-    (exercises translate_stylesheet() end-to-end for ldocking)
-  - Grabs screenshots of both windows
+For each layout preset this script:
+  - Creates Qt and ldocking comparison panes (identical to visual_compare_demo.py)
+  - Grabs screenshots of each embedded window
   - Saves <mode>_qt.png, <mode>_l.png, <mode>_side_by_side.png
   - Prints a ranked diff score table
 
-Run after making visual changes to quickly spot regressions/improvements.
+Run on a desktop (not headless) to get screenshots that look exactly like the
+visual compare app with real widget content.  pytest runs this in offscreen mode
+(QT_QPA_PLATFORM=offscreen set by conftest.py) for CI validation of scores.
 """
 from __future__ import annotations
 
@@ -21,406 +20,27 @@ import sys
 import argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+sys.path.insert(0, os.path.dirname(__file__))  # so visual_compare_demo is importable
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QStandardItemModel, QStandardItem
-from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
-    QFormLayout,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QPushButton,
-    QScrollArea,
-    QSlider,
-    QSpinBox,
-    QSizePolicy,
-    QTextEdit,
-    QTreeView,
-    QVBoxLayout,
-    QWidget,
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication
+
+# Reuse the exact same comparison pane classes and layout definitions used in
+# the interactive demo so screenshots look identical to what the user sees.
+from visual_compare_demo import (
+    LAYOUTS,
+    QtComparisonPane,
+    LDockingComparisonPane,
+    _apply_demo_style,
 )
 
-from ldocking import LDockWidget, LMainWindow
-from ldocking.stylesheet_compat import translate_stylesheet
+# Pane size: each comparison pane is shown at this size so docks have enough
+# room to render real widget content visibly.
+PANE_SIZE = QSize(760, 720)
 
-try:
-    from ldocking.monkey import _ORIG as _QT_ORIG
-    _QtMainWindow = _QT_ORIG["QMainWindow"]
-    _QtDockWidget = _QT_ORIG["QDockWidget"]
-except ImportError:
-    from PySide6.QtWidgets import QMainWindow as _QtMainWindow, QDockWidget as _QtDockWidget  # type: ignore
-    _QtDockWidget = _QtDockWidget  # noqa: F811
-
-Left = Qt.DockWidgetArea.LeftDockWidgetArea
-Right = Qt.DockWidgetArea.RightDockWidgetArea
-Top = Qt.DockWidgetArea.TopDockWidgetArea
-Bottom = Qt.DockWidgetArea.BottomDockWidgetArea
-
-WINDOW_SIZE = QSize(640, 420)
-
-LAYOUTS: dict[str, list[tuple[str, Qt.DockWidgetArea]]] = {
-    "Single Left": [("Inspector", Left)],
-    "Tabbed Left": [("Inspector", Left), ("Assets", Left)],
-    "Grouped Tabs": [("Inspector", Left), ("Assets", Left), ("Outline", Left)],
-    "Balanced": [
-        ("Inspector", Left),
-        ("Assets", Left),
-        ("Layers", Right),
-        ("Console", Bottom),
-    ],
-    "Nested Split": [
-        ("Inspector", Left),
-        ("Assets", Left),
-        ("Layers", Left),
-        ("Console", Bottom),
-    ],
-    "Full Frame": [
-        ("Inspector", Left),
-        ("Assets", Left),
-        ("Layers", Right),
-        ("History", Right),
-        ("Console", Bottom),
-    ],
-}
-
-# Pure Qt-selector stylesheet — ldocking receives this via translate_stylesheet()
-# Qt receives it verbatim.  No ldocking-specific selectors allowed here.
-PURE_QT_QSS = """
-    QMainWindow {
-        background: #f8fafc;
-    }
-    QMainWindow::separator {
-        background: #94a3b8;
-        width: 4px;
-        height: 4px;
-    }
-    QDockWidget {
-        background: #ffffff;
-        border: 1px solid #94a3b8;
-    }
-    QDockWidget::title {
-        background: #e2e8f0;
-        color: #0f172a;
-        padding: 4px 8px;
-        font-weight: 600;
-        border-bottom: 1px solid #cbd5e1;
-    }
-    QDockWidget > QWidget {
-        background: #f8fafc;
-    }
-    QDockWidget::close-button {
-        background: transparent;
-    }
-    QDockWidget::float-button {
-        background: transparent;
-    }
-    QTabBar::tab {
-        background: #dbeafe;
-        border: 1px solid #94a3b8;
-        padding: 4px 10px;
-    }
-    QTabBar::tab:selected {
-        background: #ffffff;
-    }
-"""
-
-
-def _make_inspector() -> QWidget:
-    """Property inspector with form fields."""
-    panel = QFrame()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(6, 6, 6, 6)
-    layout.setSpacing(4)
-    form = QFormLayout()
-    form.setContentsMargins(0, 0, 0, 0)
-    form.setSpacing(4)
-    form.addRow("Name:", QLineEdit("MainObject"))
-    spin = QSpinBox()
-    spin.setValue(42)
-    form.addRow("Width:", spin)
-    dspin = QDoubleSpinBox()
-    dspin.setValue(1.0)
-    form.addRow("Opacity:", dspin)
-    combo = QComboBox()
-    combo.addItems(["Solid", "Dashed", "Dotted"])
-    form.addRow("Style:", combo)
-    form.addRow("Visible:", QCheckBox())
-    layout.addLayout(form)
-    slider = QSlider(Qt.Orientation.Horizontal)
-    slider.setValue(60)
-    layout.addWidget(QLabel("Blend:"))
-    layout.addWidget(slider)
-    layout.addStretch()
-    return panel
-
-
-def _make_assets() -> QWidget:
-    """Asset browser with a list."""
-    panel = QFrame()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(4, 4, 4, 4)
-    layout.setSpacing(4)
-    search = QLineEdit()
-    search.setPlaceholderText("Search assets…")
-    layout.addWidget(search)
-    lst = QListWidget()
-    lst.addItems(["texture_albedo.png", "mesh_hero.fbx", "anim_run.anim",
-                  "material_metal.mat", "shader_pbr.glsl", "audio_footstep.wav"])
-    layout.addWidget(lst, 1)
-    row = QHBoxLayout()
-    row.addWidget(QPushButton("Import"))
-    row.addWidget(QPushButton("Refresh"))
-    layout.addLayout(row)
-    return panel
-
-
-def _make_layers() -> QWidget:
-    """Layer list with checkboxes via a tree view."""
-    panel = QFrame()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(4, 4, 4, 4)
-    layout.setSpacing(4)
-    model = QStandardItemModel(0, 2)
-    model.setHorizontalHeaderLabels(["Layer", "Lock"])
-    for name, locked in [("Background", False), ("Terrain", False),
-                          ("Props", True), ("Characters", False), ("FX", False)]:
-        item = QStandardItem(name)
-        item.setCheckable(True)
-        item.setCheckState(Qt.CheckState.Checked)
-        lock = QStandardItem("🔒" if locked else "")
-        model.appendRow([item, lock])
-    tree = QTreeView()
-    tree.setModel(model)
-    tree.setColumnWidth(0, 100)
-    tree.header().setStretchLastSection(True)
-    layout.addWidget(tree, 1)
-    return panel
-
-
-def _make_console() -> QWidget:
-    """Output console with log lines."""
-    panel = QFrame()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(4, 4, 4, 4)
-    layout.setSpacing(4)
-    log = QTextEdit()
-    log.setReadOnly(True)
-    log.setPlainText(
-        "[INFO]  Scene loaded in 0.42 s\n"
-        "[INFO]  Compiling shaders (12/12)\n"
-        "[WARN]  Missing LOD for mesh_hero\n"
-        "[INFO]  Physics world initialized\n"
-        "[ERROR] audio_footstep.wav not found\n"
-    )
-    log.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-    layout.addWidget(log, 1)
-    row = QHBoxLayout()
-    row.addWidget(QLineEdit(), 1)
-    row.addWidget(QPushButton("Run"))
-    layout.addLayout(row)
-    return panel
-
-
-def _make_history() -> QWidget:
-    """Undo/redo history list."""
-    panel = QFrame()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(4, 4, 4, 4)
-    layout.setSpacing(4)
-    lst = QListWidget()
-    actions = ["Move object", "Scale mesh", "Add material",
-                "Delete vertex", "UV unwrap", "Bake lighting"]
-    for i, act in enumerate(actions):
-        lst.addItem(f"{i + 1}. {act}")
-    lst.setCurrentRow(3)
-    layout.addWidget(lst, 1)
-    row = QHBoxLayout()
-    row.addWidget(QPushButton("Undo"))
-    row.addWidget(QPushButton("Redo"))
-    layout.addLayout(row)
-    return panel
-
-
-def _make_outline() -> QWidget:
-    """Scene outliner tree."""
-    panel = QFrame()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(4, 4, 4, 4)
-    layout.setSpacing(4)
-    model = QStandardItemModel()
-    model.setHorizontalHeaderLabels(["Scene"])
-    root = QStandardItem("Scene Root")
-    for child_name, grandchildren in [
-        ("Environment", ["Sky", "Terrain", "Water"]),
-        ("Characters", ["Hero", "NPC_01"]),
-        ("Props", ["Crate_A", "Barrel_B"]),
-    ]:
-        child = QStandardItem(child_name)
-        for gc in grandchildren:
-            child.appendRow(QStandardItem(gc))
-        root.appendRow(child)
-    model.appendRow(root)
-    tree = QTreeView()
-    tree.setModel(model)
-    tree.expandAll()
-    tree.setHeaderHidden(True)
-    layout.addWidget(tree, 1)
-    return panel
-
-
-_PANEL_FACTORIES = {
-    "Inspector": _make_inspector,
-    "Assets":    _make_assets,
-    "Layers":    _make_layers,
-    "Console":   _make_console,
-    "History":   _make_history,
-    "Outline":   _make_outline,
-}
-
-
-def _make_panel(title: str) -> QWidget:
-    factory = _PANEL_FACTORIES.get(title)
-    inner = factory() if factory is not None else _fallback_panel(title)
-    # Wrap in a scroll area so every dock reports the same compact sizeHint
-    # regardless of content.  Without this, QTextEdit / QListWidget produce
-    # large sizeHints that skew the QSplitter size distribution differently
-    # than Qt's QMainWindow algorithm, making the comparison unfair.
-    scroll = QScrollArea()
-    scroll.setWidget(inner)
-    scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QFrame.Shape.NoFrame)
-    return scroll
-
-
-def _fallback_panel(title: str) -> QWidget:
-    panel = QFrame()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(8, 8, 8, 8)
-    layout.addWidget(QLabel(title))
-    layout.addStretch()
-    return panel
-
-
-def _make_central() -> QWidget:
-    w = QLabel("Central")
-    w.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    return w
-
-
-# ---------------------------------------------------------------------------
-# Qt window builder
-# ---------------------------------------------------------------------------
-
-def _build_qt_window(layout_name: str) -> _QtMainWindow:
-    win = _QtMainWindow()
-    win.resize(WINDOW_SIZE)
-    win.setCentralWidget(_make_central())
-    docks = []
-    for title, area in LAYOUTS[layout_name]:
-        dock = _QtDockWidget(title, win)
-        dock.setWidget(_make_panel(title))
-        win.addDockWidget(area, dock)
-        docks.append(dock)
-
-    if layout_name == "Nested Split" and len(docks) >= 3:
-        win.tabifyDockWidget(docks[0], docks[1])
-        win.splitDockWidget(docks[0], docks[2], Qt.Orientation.Vertical)
-    elif layout_name == "Grouped Tabs" and len(docks) >= 3:
-        win.tabifyDockWidget(docks[0], docks[1])
-        win.tabifyDockWidget(docks[0], docks[2])
-
-    win.setStyleSheet(PURE_QT_QSS)
-    return win
-
-
-# ---------------------------------------------------------------------------
-# ldocking window builder
-# ---------------------------------------------------------------------------
-
-def _build_l_window(layout_name: str) -> LMainWindow:
-    win = LMainWindow()
-    win.resize(WINDOW_SIZE)
-    win.setCentralWidget(_make_central())
-    docks = []
-    for title, area in LAYOUTS[layout_name]:
-        dock = LDockWidget(title)
-        dock.setWidget(_make_panel(title))
-        win.addDockWidget(area, dock)
-        docks.append(dock)
-
-    if layout_name == "Nested Split" and len(docks) >= 3:
-        # Qt's splitDockWidget on a tabified dock actually tabs all three together.
-        # Mirror that behavior so layouts match.
-        win.tabifyDockWidget(docks[0], docks[1])
-        win.tabifyDockWidget(docks[0], docks[2])
-    elif layout_name == "Grouped Tabs" and len(docks) >= 3:
-        win.tabifyDockWidget(docks[0], docks[1])
-        win.tabifyDockWidget(docks[0], docks[2])
-
-    win.setStyleSheet(translate_stylesheet(PURE_QT_QSS))
-    return win
-
-
-# Target dock sizes for the 640×420 window — identical for Qt and ldocking.
-_DOCK_W_LEFT   = 180
-_DOCK_W_RIGHT  = 170
-_DOCK_H_BOTTOM = 100
-
-
-def _equalize_sizes(
-    qt_win: _QtMainWindow,
-    l_win: LMainWindow,
-    layout_name: str,
-    qt_docks: list,
-    l_docks: list,
-) -> None:
-    """Force identical dock sizes on both windows so the pixel comparison
-    measures rendering fidelity rather than initial size-distribution policy."""
-    pairs = list(LAYOUTS[layout_name])
-
-    qt_by_area: dict[Qt.DockWidgetArea, list] = {}
-    l_by_area:  dict[Qt.DockWidgetArea, list] = {}
-    for (_, area), qd, ld in zip(pairs, qt_docks, l_docks):
-        qt_by_area.setdefault(area, []).append(qd)
-        l_by_area.setdefault(area, []).append(ld)
-
-    has_bottom = Bottom in qt_by_area
-    h_main = WINDOW_SIZE.height() - (_DOCK_H_BOTTOM + 4 if has_bottom else 0)
-
-    # ---- horizontal widths (Left / Right area) ----
-    if Left in qt_by_area:
-        qt_win.resizeDocks(qt_by_area[Left][:1], [_DOCK_W_LEFT],  Qt.Orientation.Horizontal)
-        l_win.resizeDocks( l_by_area [Left][:1], [_DOCK_W_LEFT],  Qt.Orientation.Horizontal)
-    if Right in qt_by_area:
-        qt_win.resizeDocks(qt_by_area[Right][:1], [_DOCK_W_RIGHT], Qt.Orientation.Horizontal)
-        l_win.resizeDocks( l_by_area [Right][:1], [_DOCK_W_RIGHT], Qt.Orientation.Horizontal)
-
-    # ---- Bottom dock height ----
-    if has_bottom:
-        qt_win.resizeDocks(qt_by_area[Bottom][:1], [_DOCK_H_BOTTOM], Qt.Orientation.Vertical)
-        l_win.resizeDocks( l_by_area [Bottom][:1], [_DOCK_H_BOTTOM], Qt.Orientation.Vertical)
-
-    # ---- Stacked docks within a single area (Qt supports resizeDocks for these;
-    #      ldocking's resizeDocks only handles area-level, so poke the internal
-    #      QSplitter directly). ----
-    for area, qt_ds in qt_by_area.items():
-        if len(qt_ds) < 2 or area == Bottom:
-            continue
-        n = len(qt_ds)
-        sep = 4
-        h_each = max(40, (h_main - sep * (n - 1)) // n)
-        qt_win.resizeDocks(qt_ds, [h_each] * n, Qt.Orientation.Vertical)
-        l_ds = l_by_area.get(area, [])
-        l_area_widget = l_win._dock_areas.get(area)
-        if l_area_widget is not None and getattr(l_area_widget, "_split_area", None) is not None:
-            l_area_widget._split_area.setSizes([h_each] * n)
+# All screenshots are scaled to this common size before diffing and saving.
+WINDOW_SIZE = QSize(760, 720)
 
 
 # ---------------------------------------------------------------------------
@@ -516,63 +136,60 @@ def _make_side_by_side(img_qt: QImage, img_l: QImage, diff: QImage, label: str) 
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main capture loop (also called by test_screenshot_compare.py)
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--outdir", default=os.path.join(os.path.dirname(__file__), "screenshots"))
-    args = parser.parse_args()
+def capture_all(outdir: str, app: QApplication) -> list[tuple[str, float]]:
+    """Capture all layouts, save PNGs to *outdir*, return [(name, score), ...]."""
+    # Save global app state so we can restore it after capture — prevents
+    # _apply_demo_style()'s palette/stylesheet changes from leaking into
+    # subsequent pytest tests that check specific colors.
+    saved_palette = app.palette()
+    saved_stylesheet = app.styleSheet()
+    saved_style = app.style().objectName() if app.style() else None
 
-    os.makedirs(args.outdir, exist_ok=True)
-
-    app = QApplication.instance() or QApplication(sys.argv)
-    app.setStyle("Fusion")
-
+    _apply_demo_style(app)
+    os.makedirs(outdir, exist_ok=True)
     results: list[tuple[str, float]] = []
 
     for layout_name in LAYOUTS:
         slug = layout_name.lower().replace(" ", "_")
         print(f"  Capturing: {layout_name} ...", end=" ", flush=True)
 
-        qt_win = _build_qt_window(layout_name)
-        l_win = _build_l_window(layout_name)
+        qt_pane = QtComparisonPane()
+        l_pane = LDockingComparisonPane()
 
-        qt_docks = [d for d in qt_win.findChildren(_QtDockWidget)]
-        # Preserve creation order by matching titles
-        ordered_titles = [t for t, _ in LAYOUTS[layout_name]]
-        qt_docks_ordered = sorted(qt_docks, key=lambda d: ordered_titles.index(d.windowTitle()) if d.windowTitle() in ordered_titles else 99)
-        l_docks_ordered = []  # built in order inside _build_l_window
-        for title, _ in LAYOUTS[layout_name]:
-            for d in l_win.findChildren(LDockWidget):
-                if d.windowTitle() == title and d not in l_docks_ordered:
-                    l_docks_ordered.append(d)
-                    break
-
-        qt_win.show()
-        l_win.show()
+        qt_pane.resize(PANE_SIZE)
+        l_pane.resize(PANE_SIZE)
+        qt_pane.show()
+        l_pane.show()
         for _ in range(6):
             app.processEvents()
 
-        _equalize_sizes(qt_win, l_win, layout_name, qt_docks_ordered, l_docks_ordered)
-        for _ in range(4):
+        qt_pane.apply_layout(layout_name)
+        l_pane.apply_layout(layout_name)
+        for _ in range(6):
             app.processEvents()
 
-        img_qt = qt_win.grab().toImage().scaled(
-            WINDOW_SIZE, Qt.AspectRatioMode.IgnoreAspectRatio,
+        # Grab the embedded QMainWindow / LMainWindow — identical to the pane
+        # the user sees in visual_compare_demo.py.
+        img_qt = qt_pane.window.grab().toImage().scaled(
+            WINDOW_SIZE,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-        img_l = l_win.grab().toImage().scaled(
-            WINDOW_SIZE, Qt.AspectRatioMode.IgnoreAspectRatio,
+        img_l = l_pane.window.grab().toImage().scaled(
+            WINDOW_SIZE,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
 
         diff_img = _make_diff_image(img_qt, img_l)
         composite = _make_side_by_side(img_qt, img_l, diff_img, layout_name)
 
-        QPixmap.fromImage(img_qt).save(os.path.join(args.outdir, f"{slug}_qt.png"))
-        QPixmap.fromImage(img_l).save(os.path.join(args.outdir, f"{slug}_l.png"))
-        QPixmap.fromImage(composite).save(os.path.join(args.outdir, f"{slug}_side_by_side.png"))
+        QPixmap.fromImage(img_qt).save(os.path.join(outdir, f"{slug}_qt.png"))
+        QPixmap.fromImage(img_l).save(os.path.join(outdir, f"{slug}_l.png"))
+        QPixmap.fromImage(composite).save(os.path.join(outdir, f"{slug}_side_by_side.png"))
 
         score = _avg_image_diff(img_qt, img_l)
         regions = _region_scores(img_qt, img_l)
@@ -580,11 +197,29 @@ def main() -> None:
         results.append((layout_name, score))
         print(f"diff={score:.2f}  [{region_str}]")
 
-        qt_win.hide()
-        l_win.hide()
-        qt_win.deleteLater()
-        l_win.deleteLater()
+        qt_pane.hide()
+        l_pane.hide()
+        qt_pane.deleteLater()
+        l_pane.deleteLater()
         app.processEvents()
+
+    # Restore global app state
+    if saved_style:
+        app.setStyle(saved_style)
+    app.setPalette(saved_palette)
+    app.setStyleSheet(saved_stylesheet)
+
+    return results
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--outdir", default=os.path.join(os.path.dirname(__file__), "screenshots"))
+    args = parser.parse_args()
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    results = capture_all(args.outdir, app)
 
     print()
     print("=" * 48)

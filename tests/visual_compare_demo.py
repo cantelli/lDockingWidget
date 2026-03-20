@@ -11,24 +11,32 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDockWidget,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
     QSplitter,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
 from ldocking import LDockWidget, LMainWindow
+from dock_panels import make_panel
+
+# Use the real Qt classes even when ldocking.monkey has patched PySide6.QtWidgets.
+try:
+    from ldocking.monkey import _ORIG as _QT_ORIG
+    _QMainWindow = _QT_ORIG["QMainWindow"]
+    _QDockWidget = _QT_ORIG["QDockWidget"]
+except (ImportError, KeyError):
+    _QMainWindow = QMainWindow  # type: ignore[assignment]
+    _QDockWidget = QDockWidget  # type: ignore[assignment]
 
 
 Left = Qt.DockWidgetArea.LeftDockWidgetArea
@@ -62,44 +70,6 @@ LAYOUTS: dict[str, list[tuple[str, Qt.DockWidgetArea]]] = {
     ],
 }
 
-
-def make_panel(title: str) -> QWidget:
-    panel = QFrame()
-    panel.setObjectName("comparisonPanel")
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(10, 10, 10, 10)
-    layout.setSpacing(8)
-
-    heading = QLabel(title)
-    heading.setObjectName("panelHeading")
-    heading.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-    layout.addWidget(heading)
-
-    grid = QGridLayout()
-    grid.setHorizontalSpacing(8)
-    grid.setVerticalSpacing(6)
-    rows = [
-        ("Mode", "Docked"),
-        ("Width", "320 px"),
-        ("Visible", "Yes"),
-        ("Focus", "Primary"),
-    ]
-    for row, (label, value) in enumerate(rows):
-        grid.addWidget(QLabel(label), row, 0)
-        value_label = QLabel(value)
-        value_label.setObjectName("valueChip")
-        grid.addWidget(value_label, row, 1)
-    layout.addLayout(grid)
-
-    body = QLabel(
-        "This panel intentionally uses identical content on both sides so the "
-        "comparison is about the dock chrome, spacing, title bars, and tab treatment."
-    )
-    body.setWordWrap(True)
-    body.setObjectName("panelBody")
-    layout.addWidget(body)
-    layout.addStretch()
-    return panel
 
 
 def make_canvas(label: str) -> QWidget:
@@ -176,7 +146,7 @@ class QtComparisonPane(QFrame, DockSceneMixin):
         super().__init__()
         self._layout_name = "Balanced"
         self.docks: list[QDockWidget] = []
-        self.window = QMainWindow()
+        self.window = _QMainWindow()
         self.window.setCentralWidget(make_canvas("Qt central widget"))
         self._build_ui("Native Qt", "#dcfce7")
 
@@ -197,10 +167,10 @@ class QtComparisonPane(QFrame, DockSceneMixin):
             self.window.removeDockWidget(dock)
             dock.setParent(None)
             dock.deleteLater()
-        self.window.setDockOptions(QMainWindow.DockOption.AnimatedDocks | QMainWindow.DockOption.AllowTabbedDocks)
+        self.window.setDockOptions(_QMainWindow.DockOption.AnimatedDocks | _QMainWindow.DockOption.AllowTabbedDocks)
 
     def _create_dock(self, title: str) -> QDockWidget:
-        dock = QDockWidget(title, self.window)
+        dock = _QDockWidget(title, self.window)
         dock.setWidget(make_panel(title))
         return dock
 
@@ -262,15 +232,8 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
 
     def _post_layout(self, layout_name: str) -> None:
         if layout_name == "Nested Split" and len(self.docks) >= 3:
-            self.window.setDockOptions(self.window.dockOptions() | LMainWindow.AllowNestedDocks)
             self.window.tabifyDockWidget(self.docks[0], self.docks[1])
-            self.window._drop_docks(
-                Left,
-                [self.docks[2]],
-                mode="side",
-                target_id=self.docks[0].objectName() or self.docks[0].windowTitle(),
-                side=Bottom,
-            )
+            self.window.tabifyDockWidget(self.docks[0], self.docks[2])
         elif layout_name == "Grouped Tabs" and len(self.docks) >= 3:
             self.window.tabifyDockWidget(self.docks[0], self.docks[1])
             self.window.tabifyDockWidget(self.docks[0], self.docks[2])
