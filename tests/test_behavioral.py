@@ -1257,3 +1257,99 @@ def test_remove_dock_widget_noop_unknown(qapp):
     win = LMainWindow()
     dock = _dock("d")
     win.removeDockWidget(dock)  # should not raise
+
+
+# ------------------------------------------------------------------
+# tabifyDockWidget — tab order and active tab
+# ------------------------------------------------------------------
+
+def test_tabify_order_and_active_tab_matches_qt(qapp):
+    """After sequential tabifyDockWidget calls ldocking tab order and active tab match Qt."""
+    # --- ldocking side ---
+    l_win = LMainWindow()
+    da = _dock("A")
+    db = _dock("B")
+    dc = _dock("C")
+    l_win.addDockWidget(LeftDockWidgetArea, da)
+    l_win.addDockWidget(LeftDockWidgetArea, db)
+    l_win.addDockWidget(LeftDockWidgetArea, dc)
+    l_win.tabifyDockWidget(da, db)
+    l_win.tabifyDockWidget(da, dc)
+    l_win.show()
+    qapp.processEvents()
+
+    # Find the tab area for the left dock
+    from ldocking.ldock_area import LDockArea
+    from ldocking.ldock_tab_area import LDockTabArea
+    left_area: LDockArea = l_win._dock_areas[Qt.DockWidgetArea.LeftDockWidgetArea]
+    tab_widget = left_area._tab_area
+    assert tab_widget is not None, "Expected LDockTabArea after tabify"
+
+    l_count = tab_widget._tab_bar.count()
+    l_titles = [tab_widget._tab_bar.tabText(i) for i in range(l_count)]
+    l_current = tab_widget._tab_bar.currentIndex()
+
+    # --- native Qt side ---
+    qt_win = NativeQMainWindow()
+    qa = _native_dock("A")
+    qb = _native_dock("B")
+    qc = _native_dock("C")
+    qt_win.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, qa)
+    qt_win.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, qb)
+    qt_win.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, qc)
+    qt_win.tabifyDockWidget(qa, qb)
+    qt_win.tabifyDockWidget(qa, qc)
+    qt_win.show()
+    qapp.processEvents()
+
+    qt_tabified = qt_win.tabifiedDockWidgets(qa)
+    qt_titles_set = {qa.windowTitle()} | {d.windowTitle() for d in qt_tabified}
+
+    # Tab count matches
+    assert l_count == len(qt_titles_set), (
+        f"ldocking tab count {l_count} != Qt tabified count {len(qt_titles_set)}"
+    )
+    # All expected titles present
+    assert set(l_titles) == qt_titles_set, (
+        f"ldocking tabs {l_titles} != Qt tabs {sorted(qt_titles_set)}"
+    )
+    # Active tab: Qt keeps the anchor (first) dock active; tabifyDockWidget does not
+    # change the current tab when there are split siblings. Index 0 = anchor ("A").
+    assert l_current == 0, f"Expected active tab index 0 (anchor, matching Qt), got {l_current}"
+
+
+def test_drag_drop_back_to_emptied_area_no_phantom_split(qapp):
+    """Dropping sole dock back to its source area fills the area completely."""
+    win = LMainWindow()
+    d = _dock("D")
+    win.addDockWidget(LeftDockWidgetArea, d)
+
+    # Simulate what the fixed begin_drag does: remove + sync
+    win._dock_areas[LeftDockWidgetArea].remove_dock(d)
+    win._sync_content_tree_to_areas()   # ← the fix
+
+    win._drop_docks(LeftDockWidgetArea, [d], mode="area")
+    qapp.processEvents()
+
+    left = win._dock_areas[LeftDockWidgetArea]
+    assert left.all_docks() == [d], "Expected sole dock, no phantom duplicate"
+    assert win.dockWidgetArea(d) == LeftDockWidgetArea
+
+
+def test_drag_drop_back_to_emptied_area_root_is_dock_node(qapp):
+    """Area root after same-area redrop is a _DockNode, not a phantom _SplitNode."""
+    from ldocking.ldock_area import _DockNode
+    win = LMainWindow()
+    d = _dock("D")
+    win.addDockWidget(LeftDockWidgetArea, d)
+
+    win._dock_areas[LeftDockWidgetArea].remove_dock(d)
+    win._sync_content_tree_to_areas()
+
+    win._drop_docks(LeftDockWidgetArea, [d], mode="area")
+    qapp.processEvents()
+
+    left = win._dock_areas[LeftDockWidgetArea]
+    assert isinstance(left._root, _DockNode), (
+        f"Expected _DockNode root (no phantom split), got {type(left._root).__name__}"
+    )

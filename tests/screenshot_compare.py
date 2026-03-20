@@ -136,6 +136,45 @@ def _make_side_by_side(img_qt: QImage, img_l: QImage, diff: QImage, label: str) 
 
 
 # ---------------------------------------------------------------------------
+# Size equalization helper
+# ---------------------------------------------------------------------------
+
+def _equalize_pane_sizes(qt_pane, l_pane, layout_name: str, app: QApplication) -> None:
+    """Apply Qt's natural dock sizes to the ldocking pane for fair comparison."""
+    from visual_compare_demo import LAYOUTS
+
+    qt_win = qt_pane.window
+    l_win  = l_pane.window
+
+    qt_docks_by_title = {d.windowTitle(): d for d in qt_pane.docks}
+    l_docks_by_title  = {d.windowTitle(): d for d in l_pane.docks}
+
+    Left   = Qt.DockWidgetArea.LeftDockWidgetArea
+    Right  = Qt.DockWidgetArea.RightDockWidgetArea
+    Bottom = Qt.DockWidgetArea.BottomDockWidgetArea
+
+    areas_seen: set = set()
+    for title, area in LAYOUTS[layout_name]:
+        if area in areas_seen:
+            continue
+        areas_seen.add(area)
+        qt_d = qt_docks_by_title.get(title)
+        l_d  = l_docks_by_title.get(title)
+        if qt_d is None or l_d is None:
+            continue
+        if area in (Left, Right):
+            w = qt_d.width()
+            qt_win.resizeDocks([qt_d], [w], Qt.Orientation.Horizontal)
+            l_win.resizeDocks([l_d],  [w], Qt.Orientation.Horizontal)
+        if area == Bottom:
+            h = qt_d.height()
+            qt_win.resizeDocks([qt_d], [h], Qt.Orientation.Vertical)
+            l_win.resizeDocks([l_d],  [h], Qt.Orientation.Vertical)
+    for _ in range(4):
+        app.processEvents()
+
+
+# ---------------------------------------------------------------------------
 # Main capture loop (also called by test_screenshot_compare.py)
 # ---------------------------------------------------------------------------
 
@@ -170,6 +209,8 @@ def capture_all(outdir: str, app: QApplication) -> list[tuple[str, float]]:
         l_pane.apply_layout(layout_name)
         for _ in range(6):
             app.processEvents()
+
+        _equalize_pane_sizes(qt_pane, l_pane, layout_name, app)
 
         # Grab the embedded QMainWindow / LMainWindow — identical to the pane
         # the user sees in visual_compare_demo.py.

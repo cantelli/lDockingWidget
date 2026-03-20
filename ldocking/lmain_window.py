@@ -230,10 +230,10 @@ class LMainWindow(QWidget):
         if node.sizes:
             splitter.setSizes(node.sizes)
         else:
-            if node.key == "inner":
-                splitter.setStretchFactor(1, 1)
-            if node.key == "outer":
-                splitter.setStretchFactor(1, 1)
+            if node.key in ("inner", "outer"):
+                central_idx = self._child_index_containing_key(node, "central")
+                if central_idx is not None:
+                    splitter.setStretchFactor(central_idx, 1)
         return splitter
 
     def _leaf_for_key(self, key: str) -> _WidgetLeaf | None:
@@ -391,7 +391,27 @@ class LMainWindow(QWidget):
         node.children = remaining
         return node
 
+    def _bake_splitter_sizes_to_tree(self) -> None:
+        """Capture current live splitter sizes into the content-tree nodes."""
+        self._bake_node_sizes(self._content_tree)
+
+    def _bake_node_sizes(self, node: object) -> None:
+        if not isinstance(node, _SplitTree):
+            return
+        if node.key == "outer" and self._outer_splitter is not None:
+            node.sizes = list(self._outer_splitter.sizes())
+        elif node.key == "inner" and self._inner_splitter is not None:
+            node.sizes = list(self._inner_splitter.sizes())
+        for child in node.children:
+            self._bake_node_sizes(child)
+
     def _sync_content_tree_to_areas(self) -> None:
+        # Bake live splitter sizes only when a leaf is about to be removed (dock floated).
+        # Skipping during restoreState (insert-only) prevents overwriting saved sizes.
+        for _area in (LeftDockWidgetArea, RightDockWidgetArea, TopDockWidgetArea, BottomDockWidgetArea):
+            if not self._dock_areas[_area].all_docks() and self._leaf_for_area(_area) is not None:
+                self._bake_splitter_sizes_to_tree()
+                break
         native_area_states: dict[Qt.DockWidgetArea, object | None] = {}
         for area in (
             LeftDockWidgetArea,
@@ -818,6 +838,7 @@ class LMainWindow(QWidget):
         target_id: str,
         payload: object,
         index: int | None = None,
+        has_siblings: bool = False,
     ) -> object | None:
         if not isinstance(node, dict):
             return payload
@@ -828,7 +849,10 @@ class LMainWindow(QWidget):
             additions = self._payload_children(payload)
             for offset, child in enumerate(additions):
                 children.insert(insert_at + offset, child)
-            current_id = self._state_current_dock_id(payload) or target_id
+            if has_siblings:
+                current_id = target_id  # anchor stays active when tabifying within a split
+            else:
+                current_id = self._state_current_dock_id(payload) or target_id
             current_index = next(
                 (i for i, child in enumerate(children) if child.get("id") == current_id),
                 len(children) - 1,
@@ -841,22 +865,28 @@ class LMainWindow(QWidget):
             for offset, child in enumerate(additions):
                 if child.get("id") not in {existing.get("id") for existing in children}:
                     children.insert(insert_at + offset, child)
-            current_id = self._state_current_dock_id(payload) or target_id
-            current_index = next(
-                (i for i, child in enumerate(children) if child.get("id") == current_id),
-                min(node.get("current_index", 0), len(children) - 1),
-            )
+            payload_is_group = isinstance(payload, dict) and payload.get("type") == "tabs"
+            if payload_is_group:
+                current_id = self._state_current_dock_id(payload) or target_id
+                current_index = next(
+                    (i for i, child in enumerate(children) if child.get("id") == current_id),
+                    min(node.get("current_index", 0), len(children) - 1),
+                )
+            else:
+                current_index = min(node.get("current_index", 0), len(children) - 1)
             return {"type": "tabs", "current_index": current_index, "children": children}
         if node_type == "split":
+            split_children = node.get("children", [])
             return {
                 "type": "split",
                 "orientation": node.get("orientation", int(Qt.Orientation.Horizontal.value)),
                 "sizes": list(node.get("sizes", [])),
                 "children": [
-                    self._state_tabify(child, target_id, payload, index)
+                    self._state_tabify(child, target_id, payload, index,
+                                       has_siblings=len(split_children) > 1)
                     if self._state_contains_id(child, target_id)
                     else deepcopy(child)
-                    for child in node.get("children", [])
+                    for child in split_children
                 ],
             }
         return deepcopy(node)
@@ -1135,7 +1165,13 @@ class LMainWindow(QWidget):
             return
 
         dock._floating = False
-        dock.setParent(None)
+        # Clear stale floating window flags (Tool|FramelessHint|StaysOnTop) before
+        # the area rebuild so _build_widget can reparent the dock as a plain child
+        # widget.  _tab_visibility_sync prevents the implicit hide() from setting
+        # _explicitly_hidden, which would cause _rebuild() to re-hide the dock.
+        dock._tab_visibility_sync = True
+        dock.setParent(None, Qt.WindowType.Widget)
+        dock._tab_visibility_sync = False
 
         dock_id = self._dock_id(dock)
         if dock_id is None:
@@ -1149,7 +1185,6 @@ class LMainWindow(QWidget):
         payload = {"type": "dock", "id": dock_id}
         area_updates[resolved_area] = self._state_add(resolved_area, payload, pos)
         self._apply_area_state_updates(area_updates)
-        dock.setWindowFlags(Qt.WindowType.Widget)
         dock.dockLocationChanged.emit(resolved_area)
         dock._title_bar.set_float_button_icon(False)
 
@@ -1260,6 +1295,72 @@ class LMainWindow(QWidget):
         second._main_window = self
         second._floating = False
         second.setWindowFlags(Qt.WindowType.Widget)
+        second.dockLocationChanged.emit(area)
+        second._title_bar.set_float_button_icon(False)
+
+    def _state_split_dock(
+        self,
+        node: object | None,
+        target_id: str,
+        payload_id: str,
+        orientation: Qt.Orientation,
+    ) -> object | None:
+        """Wrap the sub-tree that contains target_id in a two-child split node."""
+        if node is None:
+            return {"type": "dock", "id": payload_id}
+        if not self._state_contains_id(node, target_id):
+            return deepcopy(node)
+        if isinstance(node, dict) and node.get("type") == "split":
+            return {
+                "type": "split",
+                "orientation": node.get("orientation"),
+                "sizes": list(node.get("sizes", [])),
+                "children": [
+                    self._state_split_dock(child, target_id, payload_id, orientation)
+                    if self._state_contains_id(child, target_id)
+                    else deepcopy(child)
+                    for child in node.get("children", [])
+                ],
+            }
+        # node is a dock/tabs node containing target_id — wrap it in a new split
+        return {
+            "type": "split",
+            "orientation": int(orientation.value),
+            "sizes": [],
+            "children": [deepcopy(node), {"type": "dock", "id": payload_id}],
+        }
+
+    def splitDockWidget(
+        self,
+        first: LDockWidget,
+        second: LDockWidget,
+        orientation: Qt.Orientation,
+    ) -> None:
+        area = self._area_for_dock(first)
+        if area == Qt.DockWidgetArea.NoDockWidgetArea:
+            return
+        first_id = self._dock_id(first)
+        second_id = self._dock_id(second)
+        if first_id is None or second_id is None:
+            return
+        old_area = self._area_for_dock(second)
+        area_updates: dict[Qt.DockWidgetArea, object | None] = {}
+        target_state = self._area_state(area)
+        if old_area != Qt.DockWidgetArea.NoDockWidgetArea:
+            removed_state = self._state_remove_ids(self._area_state(old_area), {second_id})
+            if old_area == area:
+                target_state = removed_state
+            else:
+                area_updates[old_area] = removed_state
+        self._dock_map[second] = area
+        area_updates[area] = self._state_split_dock(target_state, first_id, second_id, orientation)
+        # Detach second BEFORE apply so _build_widget can reparent it correctly.
+        second._main_window = self
+        second._floating = False
+        second._tab_visibility_sync = True
+        second.setParent(None, Qt.WindowType.Widget)
+        second._tab_visibility_sync = False
+        self._apply_area_state_updates(area_updates)
         second.dockLocationChanged.emit(area)
         second._title_bar.set_float_button_icon(False)
 
@@ -1851,7 +1952,9 @@ class LMainWindow(QWidget):
         for dock in docks:
             dock._main_window = self
             dock._floating = False
-            dock.setParent(None)
+            dock._tab_visibility_sync = True
+            dock.setParent(None, Qt.WindowType.Widget)
+            dock._tab_visibility_sync = False
             old_area = self._area_for_dock(dock)
             if old_area != Qt.DockWidgetArea.NoDockWidgetArea:
                 dock_ids = {
@@ -1883,7 +1986,6 @@ class LMainWindow(QWidget):
         area_updates[resolved_area] = new_state
         self._apply_area_state_updates(area_updates)
         for dock in docks:
-            dock.setWindowFlags(Qt.WindowType.Widget)
             dock.dockLocationChanged.emit(resolved_area)
             dock._title_bar.set_float_button_icon(False)
 

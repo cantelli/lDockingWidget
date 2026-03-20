@@ -137,6 +137,17 @@ class LDockWidget(QWidget):
     def widget(self) -> QWidget | None:
         return self._content_widget
 
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        base = super().sizeHint()
+        if self._content_widget is None:
+            return base
+        content_hint = self._content_widget.sizeHint()
+        title_h = self._title_bar.sizeHint().height() if self._title_bar else 0
+        return QSize(
+            max(base.width(), content_hint.width()),
+            max(base.height(), content_hint.height() + title_h),
+        )
+
     def setTitleBarWidget(self, widget: QWidget | None) -> None:
         if self._custom_title_bar is not None:
             self._custom_title_bar.setParent(None)
@@ -333,9 +344,7 @@ class LDockWidget(QWidget):
             self._outer_layout.removeWidget(self._size_grip)
             self._size_grip.hide()
 
-        self._floating = False
         self._main_window.addDockWidget(area, self)
-        self.setWindowFlags(Qt.WindowType.Widget)   # clear stale floating flags
         self._title_bar.set_float_button_icon(False)
         if self._main_window is not None:
             self._main_window.raise_()

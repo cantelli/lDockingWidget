@@ -147,7 +147,7 @@ class QtComparisonPane(QFrame, DockSceneMixin):
         self._layout_name = "Balanced"
         self.docks: list[QDockWidget] = []
         self.window = _QMainWindow()
-        self.window.setCentralWidget(make_canvas("Qt central widget"))
+        self.window.setCentralWidget(make_canvas("Central"))
         self._build_ui("Native Qt", "#dcfce7")
 
     def _build_ui(self, label: str, color: str) -> None:
@@ -195,7 +195,7 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
         self._layout_name = "Balanced"
         self.docks: list[LDockWidget] = []
         self.window = LMainWindow()
-        self.window.setCentralWidget(make_canvas("ldocking central widget"))
+        self.window.setCentralWidget(make_canvas("Central"))
         self._build_ui("ldocking", "#dbeafe")
 
     def _build_ui(self, label: str, color: str) -> None:

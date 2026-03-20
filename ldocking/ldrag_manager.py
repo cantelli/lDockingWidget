@@ -77,6 +77,8 @@ class LDragManager(QObject):
             dock._pre_float_area_side = dock._current_area._area_side
             for payload_dock in list(self._payload):
                 dock._current_area.remove_dock(payload_dock)
+            if dock._main_window is not None:
+                dock._main_window._sync_content_tree_to_areas()
 
         dock.setParent(None)
         flags = (

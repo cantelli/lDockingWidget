@@ -86,6 +86,21 @@ class LDockArea(QWidget):
     def area_side(self) -> Qt.DockWidgetArea:
         return self._area_side
 
+    def sizeHint(self) -> "QSize":  # type: ignore[override]
+        from PySide6.QtCore import QSize
+        try:
+            base = super().sizeHint()
+        except RuntimeError:
+            return QSize(40, 40)
+        docks = getattr(self, "_docks", [])
+        if not docks:
+            return base
+        if self._vertical:
+            w = max(d.sizeHint().width() for d in docks)
+            return QSize(max(base.width(), w), base.height())
+        h = max(d.sizeHint().height() for d in docks)
+        return QSize(base.width(), max(base.height(), h))
+
     def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
         super().setStyleSheet(translate_stylesheet(styleSheet))
 
@@ -371,6 +386,9 @@ class LDockArea(QWidget):
             split.addWidget(self._build_widget(child, split))
         if node.sizes:
             split.setSizes(node.sizes)
+        else:
+            for i in range(split.count()):
+                split.setStretchFactor(i, 1)
         if self._root is node:
             self._split_area = split
         return split
