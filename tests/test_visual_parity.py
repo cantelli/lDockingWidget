@@ -1011,7 +1011,10 @@ def test_drag_preview_indicator_rects_differ_by_drop_mode(qapp):
         )
     )
 
-    assert tab_rect.width() < root_rect.width()
+    # tab covers the full dock area; root-edge covers a narrow side strip —
+    # they must be distinct and the root strip is taller than the small tab dock
+    assert tab_rect != root_rect
+    assert tab_rect.height() < root_rect.height()
     assert side_rect.height() < root_rect.height()
     assert tab_rect != side_rect
 

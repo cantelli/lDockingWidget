@@ -186,12 +186,15 @@ class LMainWindow(QWidget):
         self._content_tree: object = _WidgetLeaf(self._central_placeholder, "central")
         self._outer_splitter: QSplitter | None = None
         self._inner_splitter: QSplitter | None = None
+        self._initial_sizes_applied = False
         self._rebuild_content_tree()
 
         self._status_bar: QStatusBar | None = None
         self._apply_corner_ownership()
 
     def _rebuild_content_tree(self) -> None:
+        from PySide6.QtCore import QTimer
+
         self._detach_reusable_widgets()
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
@@ -203,6 +206,41 @@ class LMainWindow(QWidget):
         self._refresh_split_keys()
         root_widget = self._build_tree_widget(self._content_tree, self._content_host)
         self._content_layout.addWidget(root_widget)
+        # Apply sizeHint-based initial widths for outer splitter once on first layout
+        if (
+            not self._initial_sizes_applied
+            and self._outer_splitter is not None
+            and self._outer_splitter._reported_sizes is None
+        ):
+            QTimer.singleShot(0, self._apply_outer_default_sizes)
+
+    def _apply_outer_default_sizes(self) -> None:
+        """Apply sizeHint-based widths to outer splitter on first layout only."""
+        self._initial_sizes_applied = True
+        if self._outer_splitter is None:
+            return
+        # Only apply when no explicit sizes have been set since the last rebuild
+        if self._outer_splitter._reported_sizes is not None:
+            return
+        splitter = self._outer_splitter
+        total = splitter.width()
+        if total <= 0:
+            return
+        sizes = list(splitter.sizes())
+        left_area = self._dock_areas.get(LeftDockWidgetArea)
+        right_area = self._dock_areas.get(RightDockWidgetArea)
+        allocated = 0
+        for i in range(splitter.count()):
+            w = splitter.widget(i)
+            if w in (left_area, right_area):
+                hint_w = w.sizeHint().width()
+                sizes[i] = hint_w
+                allocated += hint_w
+        for i in range(splitter.count()):
+            w = splitter.widget(i)
+            if w not in (left_area, right_area):
+                sizes[i] = max(0, total - allocated)
+        splitter.setSizes(sizes)
 
     def _detach_reusable_widgets(self) -> None:
         reusable = list(self._dock_areas.values())
@@ -342,8 +380,42 @@ class LMainWindow(QWidget):
         # whole existing root when the requested orientation changes. This matches
         # Qt's shell policy where, for example, a bottom dock spans the full width
         # beneath existing left/right side docks rather than only beneath central.
+        # Exception: Left/Right docks are "inner" panels and should be inserted
+        # beside the central widget within the existing outer (Vertical) grouping,
+        # not outside it — this preserves Bottom/Top dock full-width spans after
+        # a float/redock cycle (e.g., V[central, bottom] + left → V[H[left, central], bottom]).
         if target_key == "central":
             if node.orientation != orientation:
+                if side in (LeftDockWidgetArea, RightDockWidgetArea):
+                    # L/R docks are inner: when central is directly a leaf (not yet
+                    # inside a nested H split), insert beside it within this V node.
+                    # This preserves T/B sibling docks spanning the full width after
+                    # a float/redock cycle (V[central, bottom] + left → V[H[left, central], bottom]).
+                    # When central is already inside a nested split, fall through to the
+                    # outer wrap so R/L docks span the full height alongside T/B panels.
+                    central_child_idx = self._child_index_containing_key(node, target_key)
+                    if central_child_idx is not None:
+                        central_child = node.children[central_child_idx]
+                        if isinstance(central_child, _WidgetLeaf):
+                            node.children[central_child_idx] = self._insert_leaf_beside_key(
+                                central_child, target_key, leaf, side
+                            )
+                            return node
+                        elif isinstance(central_child, _SplitTree):
+                            # central is already inside a nested H split (e.g. H[central, right]).
+                            # If central is at position 0 in that split, we can safely insert the
+                            # new L/R dock beside central within the nested split, preserving T/B
+                            # sibling span (V[H[central, right], bottom] + left →
+                            # V[H[left, central, right], bottom]).
+                            cc_central_idx = self._child_index_containing_key(
+                                central_child, target_key
+                            )
+                            if cc_central_idx == 0:
+                                node.children[central_child_idx] = self._insert_leaf_beside_key(
+                                    central_child, target_key, leaf, side
+                                )
+                                return node
+                # T/B docks are outer: wrap the whole existing root
                 if side in (LeftDockWidgetArea, TopDockWidgetArea):
                     return _SplitTree(orientation, [leaf, node])
                 return _SplitTree(orientation, [node, leaf])

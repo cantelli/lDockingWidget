@@ -172,12 +172,14 @@ class LDragManager(QObject):
         dock = self._dock
         payload = list(self._payload)
         drop = self._drop_target
+        origin_area_side = self._origin_area_side
         self._reset()
 
         if dock is None:
             return
 
         if drop is not None:
+            mw = drop.main_window
             drop.main_window._drop_docks(
                 drop.area_side,
                 payload,
@@ -349,11 +351,7 @@ class LDragManager(QObject):
                     -_INDICATOR_MARGIN,
                     -_INDICATOR_MARGIN,
                 )
-                width = max(48, int(bounded.width() * _AREA_CENTER_FRACTION))
-                height = max(32, int(bounded.height() * _AREA_CENTER_FRACTION))
-                rect = QRect(0, 0, width, height)
-                rect.moveCenter(bounded.center())
-                return rect
+                return bounded
             area = mw._dock_areas[target.area_side]
             local_rect = self._compute_area_tab_rect(area)
             return QRect(area.mapToGlobal(local_rect.topLeft()), local_rect.size())
