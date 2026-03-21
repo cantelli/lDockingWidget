@@ -22,6 +22,14 @@ import argparse
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # so visual_compare_demo is importable
 
+if (
+    "QT_QPA_PLATFORM" not in os.environ
+    and sys.platform.startswith("linux")
+    and not os.environ.get("DISPLAY")
+    and not os.environ.get("WAYLAND_DISPLAY")
+):
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
 from PySide6.QtCore import QPoint, Qt, QSize
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
@@ -697,14 +705,6 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", default=os.path.join(os.path.dirname(__file__), "screenshots"))
     args = parser.parse_args()
-
-    if (
-        "QT_QPA_PLATFORM" not in os.environ
-        and sys.platform.startswith("linux")
-        and not os.environ.get("DISPLAY")
-        and not os.environ.get("WAYLAND_DISPLAY")
-    ):
-        os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
     app = QApplication.instance() or QApplication(sys.argv)
 
