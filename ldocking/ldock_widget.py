@@ -307,6 +307,9 @@ class LDockWidget(QWidget):
         else:
             self.setParent(None, flags)
         self.setWindowTitle(self._title)
+        # Floating docks must stop honoring any stale tab-group visibility
+        # override once they become top-level windows.
+        self._set_tabbed_visibility_override(None)
 
         # Add size grip only when not already in layout
         if self._size_grip is None:

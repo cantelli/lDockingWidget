@@ -120,6 +120,7 @@ class LMainWindow(QWidget):
             Qt.Corner.BottomRightCorner: BottomDockWidgetArea,
         }
         self._dock_map: dict[LDockWidget, Qt.DockWidgetArea] = {}
+        self._dock_popup_order: dict[LDockWidget, int] = {}
         self._pending_dock_restore: dict[str, dict[str, object]] = {}
         self._dock_options = _DEFAULT_DOCK_OPTIONS
 
@@ -1236,6 +1237,7 @@ class LMainWindow(QWidget):
             return
         if resolved_area not in self._dock_areas:
             raise ValueError(f"Unsupported dock area: {area!r}")
+        self._dock_popup_order.setdefault(dock, len(self._dock_popup_order))
 
         dock._main_window = self
         pos = None
@@ -1361,6 +1363,8 @@ class LMainWindow(QWidget):
             return
         if not second.isAreaAllowed(area):
             return
+        self._dock_popup_order.setdefault(first, len(self._dock_popup_order))
+        self._dock_popup_order.setdefault(second, len(self._dock_popup_order))
         first_id = self._dock_id(first)
         second_id = self._dock_id(second)
         if first_id is None or second_id is None:
@@ -1426,6 +1430,8 @@ class LMainWindow(QWidget):
         area = self._area_for_dock(first)
         if area == Qt.DockWidgetArea.NoDockWidgetArea:
             return
+        self._dock_popup_order.setdefault(first, len(self._dock_popup_order))
+        self._dock_popup_order.setdefault(second, len(self._dock_popup_order))
         first_id = self._dock_id(first)
         second_id = self._dock_id(second)
         if first_id is None or second_id is None:
@@ -1986,7 +1992,10 @@ class LMainWindow(QWidget):
         self._root_layout.addWidget(status_bar)
 
     def createPopupMenu(self) -> QMenu | None:
-        docks = list(self._dock_map)
+        docks = sorted(
+            self._dock_map,
+            key=lambda dock: self._dock_popup_order.get(dock, len(self._dock_popup_order)),
+        )
         toolbars = self._tool_bars
         if not docks and not toolbars:
             return None

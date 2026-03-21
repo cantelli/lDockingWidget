@@ -181,3 +181,24 @@ def test_official_example_tab_float_restore_parity(qapp):
 
     native_win.close()
     monkey_win.close()
+
+
+def test_official_example_popup_menu_order_matches_native(qapp):
+    if not EXAMPLE_DIR.exists():
+        import pytest
+
+        pytest.skip("official Qt dockwidgets example is not present locally")
+
+    native_win = _load_official_example(qapp, "native")
+    monkey_win = _load_official_example(qapp, "monkey")
+
+    native_popup = native_win.createPopupMenu()
+    monkey_popup = monkey_win.createPopupMenu()
+    assert native_popup is not None
+    assert monkey_popup is not None
+    assert [action.text() for action in monkey_popup.actions()] == [
+        action.text() for action in native_popup.actions()
+    ]
+
+    native_win.close()
+    monkey_win.close()

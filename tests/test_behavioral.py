@@ -598,6 +598,66 @@ def test_toggle_view_action_restores_hidden_floating_dock(qapp):
     assert dock.isFloating()
 
 
+def test_tabified_dock_remains_visible_when_floated_like_native_qt(qapp):
+    """Floating the active tab from a tab group keeps the floated dock visible."""
+    native_win = NativeQMainWindow()
+    native_first = _native_dock("first")
+    native_second = _native_dock("second")
+    native_win.addDockWidget(RightDockWidgetArea, native_first)
+    native_win.addDockWidget(RightDockWidgetArea, native_second)
+    native_win.tabifyDockWidget(native_first, native_second)
+    native_win.show()
+
+    win = LMainWindow()
+    first = _dock("first")
+    second = _dock("second")
+    win.addDockWidget(RightDockWidgetArea, first)
+    win.addDockWidget(RightDockWidgetArea, second)
+    win.tabifyDockWidget(first, second)
+    win.show()
+    qapp.processEvents()
+
+    native_second.setFloating(True)
+    second.setFloating(True)
+    qapp.processEvents()
+
+    assert second.isFloating() is native_second.isFloating()
+    assert second.isVisible() is native_second.isVisible()
+    assert first.isVisible() is native_first.isVisible()
+
+    native_win.close()
+    win.close()
+
+
+def test_same_area_initial_split_heights_match_native_qt(qapp):
+    """Sequential same-area docks start with Qt-like balanced heights."""
+    native_win = NativeQMainWindow()
+    native_first = _native_dock("first")
+    native_second = _native_dock("second")
+    native_win.addDockWidget(RightDockWidgetArea, native_first)
+    native_win.addDockWidget(RightDockWidgetArea, native_second)
+    native_win.show()
+
+    win = LMainWindow()
+    first = _dock("first")
+    second = _dock("second")
+    win.addDockWidget(RightDockWidgetArea, first)
+    win.addDockWidget(RightDockWidgetArea, second)
+    win.show()
+    qapp.processEvents()
+
+    native_delta = abs(native_first.height() - native_second.height())
+    delta = abs(first.height() - second.height())
+
+    assert delta <= 12
+    assert abs(first.height() - native_first.height()) <= 12
+    assert abs(second.height() - native_second.height()) <= 12
+    assert delta <= native_delta + 12
+
+    native_win.close()
+    win.close()
+
+
 def test_force_tabbed_docks_tabs_same_area(qapp):
     """ForceTabbedDocks keeps same-area docks in a tab group."""
     win = LMainWindow()

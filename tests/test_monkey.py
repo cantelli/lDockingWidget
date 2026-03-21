@@ -186,6 +186,30 @@ def test_qtpy_style_fixture_uses_ldocking_classes_when_patched(qapp):
     win.close()
 
 
+def test_qtpy_loadui_adopts_qmainwindow_children_when_patched(qapp):
+    pytest.importorskip("qtpy")
+    from qtpy import uic
+    from PySide6.QtWidgets import QMainWindow, QToolBar
+
+    ui_path = os.path.join(os.path.dirname(__file__), "fixtures", "loadui_qmainwindow.ui")
+    win = QMainWindow()
+    uic.loadUi(ui_path, win)
+
+    assert isinstance(win, LMainWindow)
+    assert win.windowTitle() == "Window From UI"
+    assert win.centralWidget() is not None
+    assert win.centralWidget().objectName() == "centralwidget"
+    assert [action.text() for action in win.menuBar().actions()] == ["File"]
+    assert win.statusBar().objectName() == "statusbar"
+    popup = win.createPopupMenu()
+    assert popup is not None
+    assert [action.text() for action in popup.actions()] == ["Main Toolbar"]
+    toolbars = win.findChildren(QToolBar)
+    assert len(toolbars) == 1
+    assert toolbars[0].windowTitle() == "Main Toolbar"
+    win.close()
+
+
 def test_fixture_imported_before_patch_keeps_native_bindings(qapp):
     monkey.unpatch()
     module = _load_fixture("labelme_shape_app")

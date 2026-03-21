@@ -111,11 +111,9 @@ class LDockArea(QWidget):
     def _apply_initial_sizes(self) -> None:
         """Set initial split sizes to approximate Qt QDockAreaLayout behavior.
 
-        Qt gives child 0 the majority of space and each remaining child a
-        proportional share of roughly half the available space — empirically
-        derived from comparing Qt vs ldocking screenshots at 760×720.
-
-        Skipped if sizes were restored from saved state.
+        Use a proportional split based on child size hints when no explicit
+        sizes were restored. This keeps equal-hint docks balanced on first
+        layout, matching native Qt's default same-area behavior more closely.
         """
         split = self._split_area
         if split is None or split.count() < 2:
@@ -137,11 +135,11 @@ class LDockArea(QWidget):
             hints = [max(split.widget(i).sizeHint().width(), 1)
                      for i in range(split.count())]
         sum_hints = max(sum(hints), 1)
-        # Each "other" (non-primary) child gets its proportional share of half
-        # the available space, matching empirical Qt QDockAreaLayout output.
-        others = [max(h * available // (2 * sum_hints), 1) for h in hints[1:]]
-        primary = max(available - sum(others), 1)
-        split.setSizes([primary] + others)
+        sizes = [max(h * available // sum_hints, 1) for h in hints]
+        remainder = available - sum(sizes)
+        if remainder > 0:
+            sizes[0] += remainder
+        split.setSizes(sizes)
 
     def setStyleSheet(self, styleSheet: str) -> None:  # type: ignore[override]
         super().setStyleSheet(translate_stylesheet(styleSheet))
