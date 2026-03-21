@@ -698,6 +698,14 @@ def main() -> None:
     parser.add_argument("--outdir", default=os.path.join(os.path.dirname(__file__), "screenshots"))
     args = parser.parse_args()
 
+    if (
+        "QT_QPA_PLATFORM" not in os.environ
+        and sys.platform.startswith("linux")
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    ):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
     app = QApplication.instance() or QApplication(sys.argv)
 
     results = capture_all(args.outdir, app)
