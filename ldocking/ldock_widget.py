@@ -89,7 +89,10 @@ class LDockWidget(QWidget):
     AllDockWidgetAreas = AllDockWidgetAreas
     NoDockWidgetArea = NoDockWidgetArea
 
-    def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
+    def __init__(self, title: str | QWidget = "", parent: QWidget | None = None) -> None:
+        if isinstance(title, QWidget) and parent is None:
+            parent = title
+            title = ""
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("class", "QDockWidget")

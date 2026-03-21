@@ -2002,7 +2002,7 @@ class LMainWindow(QWidget):
         menu = QMenu(self)
         for dock in docks:
             menu.addAction(dock.toggleViewAction())
-        if docks and toolbars:
+        if docks:
             menu.addSeparator()
         for toolbar in toolbars:
             menu.addAction(toolbar.toggleViewAction())

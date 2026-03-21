@@ -127,6 +127,18 @@ def test_constructed_instance_is_ldockwidget(qapp):
     assert isinstance(dock, LDockWidget)
 
 
+def test_constructed_qdockwidget_accepts_parent_only_signature(qapp):
+    from PySide6.QtWidgets import QDockWidget, QMainWindow
+
+    parent = QMainWindow()
+    dock = QDockWidget(parent)
+    assert isinstance(dock, LDockWidget)
+    assert dock.parent() is parent
+    assert dock.windowTitle() == ""
+    dock.close()
+    parent.close()
+
+
 # ------------------------------------------------------------------
 # isinstance after patch
 # ------------------------------------------------------------------

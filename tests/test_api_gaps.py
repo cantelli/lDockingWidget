@@ -360,7 +360,7 @@ def test_create_popup_menu_empty(qapp):
 
 
 def test_create_popup_menu_docks_only(qapp):
-    """Menu contains one action per dock."""
+    """Menu contains one action per dock plus Qt's trailing separator."""
     win = LMainWindow()
     da = LDockWidget("Alpha")
     da.setObjectName("Alpha")
@@ -371,9 +371,11 @@ def test_create_popup_menu_docks_only(qapp):
 
     menu = win.createPopupMenu()
     assert isinstance(menu, QMenu)
-    action_texts = [a.text() for a in menu.actions()]
+    actions = menu.actions()
+    action_texts = [a.text() for a in actions]
     assert "Alpha" in action_texts
     assert "Beta" in action_texts
+    assert actions[-1].isSeparator()
 
 
 def test_create_popup_menu_with_toolbars(qapp):
