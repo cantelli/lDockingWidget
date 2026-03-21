@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(__file__))  # so visual_compare_demo is impor
 from PySide6.QtCore import QPoint, Qt, QSize
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
+from ldocking import translate_stylesheet
 
 # Reuse the exact same comparison pane classes and layout definitions used in
 # the interactive demo so screenshots look identical to what the user sees.
@@ -35,6 +36,7 @@ from visual_compare_demo import (
     _apply_demo_style,
 )
 from compare_scenarios import SCENARIOS
+from dock_qss_fixtures import DOCK_CHROME_QSS, TABBED_DOCK_QSS
 
 # Pane size: each comparison pane is shown at this size so docks have enough
 # room to render real widget content visibly.
@@ -203,6 +205,39 @@ def _dispose_panes(app: QApplication, *panes) -> None:
         app.processEvents()
 
 
+def _save_app_state(app: QApplication) -> tuple[object, str, str | None]:
+    return (
+        app.palette(),
+        app.styleSheet(),
+        app.style().objectName() if app.style() else None,
+    )
+
+
+def _restore_app_state(
+    app: QApplication,
+    state: tuple[object, str, str | None],
+) -> None:
+    saved_palette, saved_stylesheet, saved_style = state
+    if saved_style:
+        app.setStyle(saved_style)
+    app.setPalette(saved_palette)
+    app.setStyleSheet(saved_stylesheet)
+
+
+def _capture_window_pair(outdir: str, stem: str, qt_window, l_window) -> float:
+    img_qt = qt_window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    img_l = l_window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    return _save_side_by_side(outdir, stem, img_qt, img_l)
+
+
 def _dock_metrics(pane) -> dict[str, dict[str, object]]:
     metrics: dict[str, dict[str, object]] = {}
     for dock in pane.docks:
@@ -252,6 +287,23 @@ def _equalize_pane_sizes(qt_pane, l_pane, layout_name: str, app: QApplication) -
             l_win.resizeDocks([l_d],  [h], Qt.Orientation.Vertical)
     for _ in range(4):
         app.processEvents()
+
+
+def _new_panes(app: QApplication, layout_name: str) -> tuple[QtComparisonPane, LDockingComparisonPane]:
+    qt_pane = QtComparisonPane()
+    l_pane = LDockingComparisonPane()
+    qt_pane.resize(PANE_SIZE)
+    l_pane.resize(PANE_SIZE)
+    qt_pane.show()
+    l_pane.show()
+    for _ in range(6):
+        app.processEvents()
+    qt_pane.apply_layout(layout_name)
+    l_pane.apply_layout(layout_name)
+    for _ in range(6):
+        app.processEvents()
+    _equalize_pane_sizes(qt_pane, l_pane, layout_name, app)
+    return qt_pane, l_pane
 
 
 # ---------------------------------------------------------------------------
@@ -335,9 +387,7 @@ def capture_float_redock_states(outdir: str, app: QApplication) -> list[tuple[st
 
     results: list[tuple[str, float]] = []
     os.makedirs(outdir, exist_ok=True)
-    saved_palette = app.palette()
-    saved_stylesheet = app.styleSheet()
-    saved_style = app.style().objectName() if app.style() else None
+    saved_state = _save_app_state(app)
     _apply_demo_style(app)
 
     layout_name = "Balanced"
@@ -417,10 +467,7 @@ def capture_float_redock_states(outdir: str, app: QApplication) -> list[tuple[st
     print(f"diff={score_redock:.2f}")
 
     _dispose_panes(app, qt_pane, l_pane)
-    if saved_style:
-        app.setStyle(saved_style)
-    app.setPalette(saved_palette)
-    app.setStyleSheet(saved_stylesheet)
+    _restore_app_state(app, saved_state)
 
     return results
 
@@ -429,9 +476,7 @@ def capture_undock_all_state(outdir: str, app: QApplication) -> list[tuple[str, 
     """Capture the all-docks-floating shell, scene, and per-dock windows."""
     results: list[tuple[str, float]] = []
     os.makedirs(outdir, exist_ok=True)
-    saved_palette = app.palette()
-    saved_stylesheet = app.styleSheet()
-    saved_style = app.style().objectName() if app.style() else None
+    saved_state = _save_app_state(app)
     _apply_demo_style(app)
 
     qt_pane = QtComparisonPane()
@@ -496,10 +541,7 @@ def capture_undock_all_state(outdir: str, app: QApplication) -> list[tuple[str, 
         print(f"diff={score_dock:.2f}")
 
     _dispose_panes(app, qt_pane, l_pane)
-    if saved_style:
-        app.setStyle(saved_style)
-    app.setPalette(saved_palette)
-    app.setStyleSheet(saved_stylesheet)
+    _restore_app_state(app, saved_state)
 
     return results
 
@@ -512,9 +554,7 @@ def capture_dynamic_scenarios(
     results: list[tuple[str, float]] = []
     metrics: dict[str, dict[str, dict[str, dict[str, object]]]] = {}
     os.makedirs(outdir, exist_ok=True)
-    saved_palette = app.palette()
-    saved_stylesheet = app.styleSheet()
-    saved_style = app.style().objectName() if app.style() else None
+    saved_state = _save_app_state(app)
     _apply_demo_style(app)
 
     for scenario_name, scenario in SCENARIOS.items():
@@ -568,11 +608,89 @@ def capture_dynamic_scenarios(
         metrics[scenario_name] = scenario_metrics
         _dispose_panes(app, qt_pane, l_pane)
 
-    if saved_style:
-        app.setStyle(saved_style)
-    app.setPalette(saved_palette)
-    app.setStyleSheet(saved_stylesheet)
+    _restore_app_state(app, saved_state)
     return results, metrics
+
+
+def capture_styled_qdock_qss(outdir: str, app: QApplication) -> list[tuple[str, float]]:
+    """Capture parity using Qt-authored dock QSS on both Qt and ldocking."""
+    results: list[tuple[str, float]] = []
+    os.makedirs(outdir, exist_ok=True)
+    saved_state = _save_app_state(app)
+    monkey_module = sys.modules.get("ldocking.monkey")
+    was_patched = bool(monkey_module is not None and monkey_module.is_patched())
+
+    try:
+        _apply_demo_style(app)
+        direct_cases = (
+            ("styled_direct_single_left", "Single Left", DOCK_CHROME_QSS),
+            ("styled_direct_balanced", "Balanced", DOCK_CHROME_QSS),
+            ("styled_direct_tabbed_left", "Tabbed Left", TABBED_DOCK_QSS),
+        )
+        for stem, layout_name, qss in direct_cases:
+            qt_pane, l_pane = _new_panes(app, layout_name)
+            qt_pane.window.setStyleSheet(qss)
+            l_pane.window.setStyleSheet(translate_stylesheet(qss))
+            for _ in range(6):
+                app.processEvents()
+            print(f"  Capturing: {stem} ...", end=" ", flush=True)
+            score = _capture_window_pair(outdir, stem, qt_pane.window, l_pane.window)
+            results.append((stem, score))
+            print(f"diff={score:.2f}")
+            _dispose_panes(app, qt_pane, l_pane)
+
+        qt_pane, l_pane = _new_panes(app, "Balanced")
+        qt_pane.window.setStyleSheet(DOCK_CHROME_QSS)
+        l_pane.window.setStyleSheet(translate_stylesheet(DOCK_CHROME_QSS))
+        for _ in range(6):
+            app.processEvents()
+        dynamic_stems = [("styled_direct_balanced__00_initial", None)]
+        dynamic_stems.extend(
+            (f"styled_direct_balanced__{index:02d}_{action['label']}", action)
+            for index, action in enumerate(SCENARIOS["balanced_float_right_redock"]["steps"], start=1)
+        )
+        for stem, action in dynamic_stems:
+            if action is not None:
+                qt_pane.apply_action(action)
+                l_pane.apply_action(action)
+                for _ in range(8):
+                    app.processEvents()
+            print(f"  Capturing: {stem} ...", end=" ", flush=True)
+            score = _capture_window_pair(outdir, stem, qt_pane.window, l_pane.window)
+            results.append((stem, score))
+            print(f"diff={score:.2f}")
+        _dispose_panes(app, qt_pane, l_pane)
+
+        _restore_app_state(app, saved_state)
+        _apply_demo_style(app)
+        from ldocking import bootstrap
+        bootstrap.activate(validate=False)
+        patched_cases = (
+            ("styled_patched_balanced", "Balanced", DOCK_CHROME_QSS),
+            ("styled_patched_tabbed_left", "Tabbed Left", TABBED_DOCK_QSS),
+        )
+        for stem, layout_name, qss in patched_cases:
+            app.setStyleSheet(qss)
+            qt_pane, l_pane = _new_panes(app, layout_name)
+            qt_pane.window.setStyleSheet(qss)
+            for _ in range(6):
+                app.processEvents()
+            print(f"  Capturing: {stem} ...", end=" ", flush=True)
+            score = _capture_window_pair(outdir, stem, qt_pane.window, l_pane.window)
+            results.append((stem, score))
+            print(f"diff={score:.2f}")
+            _dispose_panes(app, qt_pane, l_pane)
+            app.setStyleSheet("")
+    finally:
+        if "ldocking.bootstrap" in sys.modules:
+            from ldocking import bootstrap
+            if was_patched:
+                bootstrap.activate(validate=False)
+            else:
+                bootstrap.deactivate()
+        _restore_app_state(app, saved_state)
+
+    return results
 
 
 def main() -> None:
@@ -587,6 +705,7 @@ def main() -> None:
     results += capture_undock_all_state(args.outdir, app)
     dynamic_results, _ = capture_dynamic_scenarios(args.outdir, app)
     results += dynamic_results
+    results += capture_styled_qdock_qss(args.outdir, app)
 
     print()
     print("=" * 48)

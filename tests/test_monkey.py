@@ -3,6 +3,7 @@ import importlib
 import sys
 import os
 from types import ModuleType
+sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import QLabel
 import ldocking.monkey as monkey
 import ldocking.bootstrap as bootstrap
 from ldocking import LDockWidget, LMainWindow
+from dock_qss_fixtures import DOCK_CHROME_QSS
 
 FIXTURE_PREFIX = "tools.dock_benchmarks.fixtures"
 _TEST_LEAK_EXCLUDES = (
@@ -293,3 +295,63 @@ def test_bootstrap_activate_from_env_can_enable_patch(qapp, monkeypatch):
     assert report.requested is True
     assert report.patched is True
     assert report.stylesheet_translation_active is True
+
+
+def test_patched_qapplication_stylesheet_keeps_qdock_css_visually_close_to_qt(qapp):
+    orig_main = monkey._ORIG["QMainWindow"]
+    orig_dock = monkey._ORIG["QDockWidget"]
+
+    def avg_diff(img1, img2) -> float:
+        width = min(img1.width(), img2.width())
+        height = min(img1.height(), img2.height())
+        total = 0
+        for y in range(height):
+            for x in range(width):
+                c1 = img1.pixelColor(x, y)
+                c2 = img2.pixelColor(x, y)
+                total += (
+                    abs(c1.red() - c2.red())
+                    + abs(c1.green() - c2.green())
+                    + abs(c1.blue() - c2.blue())
+                )
+        return total / (width * height * 3)
+
+    qapp.setStyle("Fusion")
+    qapp.setStyleSheet(DOCK_CHROME_QSS)
+    try:
+        lmw = LMainWindow()
+        lmw.resize(620, 420)
+        lmw.setCentralWidget(QLabel("central"))
+        for title, area in (
+            ("Inspector", Qt.DockWidgetArea.LeftDockWidgetArea),
+            ("Layers", Qt.DockWidgetArea.RightDockWidgetArea),
+            ("Console", Qt.DockWidgetArea.BottomDockWidgetArea),
+        ):
+            dock = LDockWidget(title)
+            dock.setWidget(QLabel(title))
+            lmw.addDockWidget(area, dock)
+
+        qtmw = orig_main()
+        qtmw.resize(620, 420)
+        qtmw.setCentralWidget(QLabel("central"))
+        for title, area in (
+            ("Inspector", Qt.DockWidgetArea.LeftDockWidgetArea),
+            ("Layers", Qt.DockWidgetArea.RightDockWidgetArea),
+            ("Console", Qt.DockWidgetArea.BottomDockWidgetArea),
+        ):
+            dock = orig_dock(title, qtmw)
+            dock.setWidget(QLabel(title))
+            qtmw.addDockWidget(area, dock)
+        qtmw.setStyleSheet(DOCK_CHROME_QSS)
+
+        lmw.show()
+        qtmw.show()
+        qapp.processEvents()
+
+        diff = avg_diff(lmw.grab().toImage(), qtmw.grab().toImage())
+        assert diff <= 18.0
+
+        lmw.close()
+        qtmw.close()
+    finally:
+        qapp.setStyleSheet("")

@@ -13,6 +13,7 @@ import screenshot_compare as sc
 
 THRESHOLD = 30.0
 FLOATING_THRESHOLD = 60.0
+STYLED_THRESHOLD = 35.0
 _CAPTURE_RE = re.compile(r"Capturing:\s+(?P<name>.+?)\s+\.\.\.\s+diff=(?P<score>\d+\.\d+)")
 
 
@@ -53,7 +54,11 @@ def test_screenshot_compare_script_runs_and_writes_files():
 
     failures = []
     for name, score in scores.items():
-        threshold = FLOATING_THRESHOLD if name.startswith("undock_all_") or name == "float_dock" else THRESHOLD
+        threshold = THRESHOLD
+        if name.startswith("undock_all_") or name == "float_dock":
+            threshold = FLOATING_THRESHOLD
+        elif name.startswith("styled_"):
+            threshold = STYLED_THRESHOLD
         if score > threshold:
             failures.append((name, score, threshold))
     assert not failures, (
@@ -85,6 +90,21 @@ def test_screenshot_compare_script_runs_and_writes_files():
         )
 
     for stem in _scenario_capture_names():
+        path = os.path.join(outdir, f"{stem}_side_by_side.png")
+        assert os.path.isfile(path) and os.path.getsize(path) > 0, (
+            f"Missing or empty screenshot: {path}"
+        )
+
+    for stem in (
+        "styled_direct_single_left",
+        "styled_direct_balanced",
+        "styled_direct_tabbed_left",
+        "styled_direct_balanced__00_initial",
+        "styled_direct_balanced__01_float_layers",
+        "styled_direct_balanced__02_redock_layers",
+        "styled_patched_balanced",
+        "styled_patched_tabbed_left",
+    ):
         path = os.path.join(outdir, f"{stem}_side_by_side.png")
         assert os.path.isfile(path) and os.path.getsize(path) > 0, (
             f"Missing or empty screenshot: {path}"
