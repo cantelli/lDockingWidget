@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QColor, QPainter, QPalette
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import QRubberBand, QStyle, QStyleOptionRubberBand, QWidget
 
 
 class LDropIndicator(QWidget):
-    """Frameless semi-transparent blue rectangle shown over drop targets."""
+    """Frameless overlay shown over drop targets during drag, styled as a rubber band."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -31,12 +31,9 @@ class LDropIndicator(QWidget):
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        highlight = self.palette().color(QPalette.ColorRole.Highlight)
-        fill = QColor(highlight)
-        fill.setAlpha(60)
-        outline = QColor(highlight)
-        outline.setAlpha(180)
-        painter.fillRect(self.rect(), fill)
-        painter.setPen(outline)
-        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+        opt = QStyleOptionRubberBand()
+        opt.initFrom(self)
+        opt.shape = QRubberBand.Shape.Rectangle
+        opt.opaque = False
+        opt.rect = self.rect()
+        self.style().drawControl(QStyle.ControlElement.CE_RubberBand, opt, painter, self)
