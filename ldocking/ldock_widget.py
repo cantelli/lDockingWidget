@@ -252,20 +252,12 @@ class LDockWidget(QWidget):
         # Capture geometry BEFORE detaching (mapToGlobal needs a live parent chain)
         snap_pos = self.mapToGlobal(QPoint(0, 0))
         snap_size = self.size()
+        # Retain the actual docked size (matches Qt QDockWidget behaviour).
+        # Only expand to minimumSizeHint so the title bar remains usable when
+        # a dock was extremely narrow in its docked position.
         floating_size = snap_size.expandedTo(
-            self.sizeHint().expandedTo(self.minimumSize())
+            self.minimumSizeHint().expandedTo(self.minimumSize())
         )
-        if self._main_window is not None:
-            # Floating starts from a more window-like size than the narrow dock strip.
-            # This keeps the frameless presentation usable without claiming exact Qt parity.
-            floating_size = floating_size.expandedTo(
-                QSize(
-                    max(_DEFAULT_FLOATING_SIZE.width(), self._main_window.width() // 3),
-                    max(_DEFAULT_FLOATING_SIZE.height(), self._main_window.height() // 3),
-                )
-            )
-        else:
-            floating_size = floating_size.expandedTo(_DEFAULT_FLOATING_SIZE)
 
         if self._current_area is not None:
             dock_id = self._main_window._dock_id(self) if self._main_window is not None else None

@@ -201,7 +201,7 @@ class LDragManager(QObject):
     def _find_drop_target(self, global_pos: QPoint) -> _DropTarget | None:
         from .lmain_window import LMainWindow
 
-        for widget in QApplication.topLevelWidgets():
+        for widget in QApplication.allWidgets():
             if isinstance(widget, LMainWindow) and widget.isVisible():
                 local = widget.mapFromGlobal(global_pos)
                 if widget.rect().contains(local):
