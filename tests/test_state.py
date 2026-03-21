@@ -18,6 +18,9 @@ from ldocking import (
     BottomDockWidgetArea,
 )
 
+NativeQDockWidget = monkey._ORIG["QDockWidget"]
+NativeQMainWindow = monkey._ORIG["QMainWindow"]
+
 
 def _make_dock(name: str) -> LDockWidget:
     d = LDockWidget(name)
@@ -1000,5 +1003,3 @@ def test_restore_state_native_qt_flattens_same_area_non_tab_groups(qapp):
     left_leaf = win._leaf_for_key("left")
     assert left_leaf is not None
     assert left_leaf.area_state["type"] == "split"
-NativeQDockWidget = monkey._ORIG["QDockWidget"]
-NativeQMainWindow = monkey._ORIG["QMainWindow"]
