@@ -114,6 +114,8 @@ class LDockWidget(QWidget):
         self._pre_float_selected = False
         self._pre_float_save_as_docked = False
         self._restored_docked_size: QSize | None = None
+        self._pending_float_pos: QPoint | None = None
+        self._pending_float_size: QSize | None = None
 
         # Resize drag state
         self._resize_dir = 0
@@ -139,10 +141,12 @@ class LDockWidget(QWidget):
 
     def sizeHint(self) -> QSize:  # type: ignore[override]
         base = super().sizeHint()
-        if self._content_widget is None:
+        content_widget = getattr(self, "_content_widget", None)
+        title_bar = getattr(self, "_title_bar", None)
+        if content_widget is None:
             return base
-        content_hint = self._content_widget.sizeHint()
-        title_h = self._title_bar.sizeHint().height() if self._title_bar else 0
+        content_hint = content_widget.sizeHint()
+        title_h = title_bar.sizeHint().height() if title_bar is not None else 0
         return QSize(
             max(base.width(), content_hint.width()),
             max(base.height(), content_hint.height() + title_h),
@@ -249,9 +253,14 @@ class LDockWidget(QWidget):
     def _float_out(self, pos: QPoint | None = None) -> None:
         """Detach from dock area and become a floating top-level window."""
         self._reset_interaction_state()
+        if self._main_window is not None:
+            self._main_window._snapshot_floating_geometries()
+
         # Capture geometry BEFORE detaching (mapToGlobal needs a live parent chain)
-        snap_pos = self.mapToGlobal(QPoint(0, 0))
-        snap_size = self.size()
+        snap_pos = self._pending_float_pos or self.mapToGlobal(QPoint(0, 0))
+        snap_size = self._pending_float_size or self.size()
+        self._pending_float_pos = None
+        self._pending_float_size = None
         # Retain the actual docked size (matches Qt QDockWidget behaviour).
         # Only expand to minimumSizeHint so the title bar remains usable when
         # a dock was extremely narrow in its docked position.

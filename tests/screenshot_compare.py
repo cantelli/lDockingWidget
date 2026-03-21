@@ -22,7 +22,7 @@ import argparse
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # so visual_compare_demo is importable
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QPoint, Qt, QSize
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
@@ -34,6 +34,7 @@ from visual_compare_demo import (
     LDockingComparisonPane,
     _apply_demo_style,
 )
+from compare_scenarios import SCENARIOS
 
 # Pane size: each comparison pane is shown at this size so docks have enough
 # room to render real widget content visibly.
@@ -41,6 +42,7 @@ PANE_SIZE = QSize(760, 720)
 
 # All screenshots are scaled to this common size before diffing and saving.
 WINDOW_SIZE = QSize(760, 720)
+UNDOCK_ALL_DOCKS = ("Inspector", "Assets", "Layers", "Console")
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +135,84 @@ def _make_side_by_side(img_qt: QImage, img_l: QImage, diff: QImage, label: str) 
     painter.drawImage(w * 2 + gap * 2, bar_h, diff)
     painter.end()
     return out
+
+
+def _save_side_by_side(outdir: str, stem: str, img_qt: QImage, img_l: QImage) -> float:
+    """Save paired Qt/ldocking images plus a diff composite. Returns avg diff."""
+    diff = _make_diff_image(img_qt, img_l)
+    composite = _make_side_by_side(img_qt, img_l, diff, stem)
+    QPixmap.fromImage(img_qt).save(os.path.join(outdir, f"{stem}_qt.png"))
+    QPixmap.fromImage(img_l).save(os.path.join(outdir, f"{stem}_l.png"))
+    QPixmap.fromImage(composite).save(os.path.join(outdir, f"{stem}_side_by_side.png"))
+    return _avg_image_diff(img_qt, img_l)
+
+
+def _dock_by_title(docks, title: str):
+    for dock in docks:
+        if dock.windowTitle() == title:
+            return dock
+    raise KeyError(f"Missing dock {title!r}")
+
+
+def _scene_image(docks) -> QImage:
+    visible_docks = [dock for dock in docks if dock.isVisible()]
+    if not visible_docks:
+        img = QImage(32, 32, QImage.Format.Format_RGB32)
+        img.fill(QColor("#f1f5f9"))
+        return img
+
+    rects = [dock.geometry() for dock in visible_docks]
+    min_x = min(rect.x() for rect in rects)
+    min_y = min(rect.y() for rect in rects)
+    max_x = max(rect.right() for rect in rects)
+    max_y = max(rect.bottom() for rect in rects)
+    pad = 20
+    canvas = QImage(
+        max_x - min_x + 1 + pad * 2,
+        max_y - min_y + 1 + pad * 2,
+        QImage.Format.Format_RGB32,
+    )
+    canvas.fill(QColor("#f1f5f9"))
+
+    painter = QPainter(canvas)
+    for dock in visible_docks:
+        offset = QPoint(
+            dock.geometry().x() - min_x + pad,
+            dock.geometry().y() - min_y + pad,
+        )
+        painter.drawImage(offset, dock.grab().toImage())
+    painter.end()
+    return canvas
+
+
+def _dispose_panes(app: QApplication, *panes) -> None:
+    for pane in panes:
+        window = getattr(pane, "window", None)
+        for dock in getattr(pane, "docks", []):
+            dock.hide()
+            dock.setParent(None)
+            dock.deleteLater()
+        if window is not None:
+            window.hide()
+            window.setParent(None)
+            window.deleteLater()
+        pane.hide()
+        pane.setParent(None)
+        pane.deleteLater()
+    for _ in range(4):
+        app.processEvents()
+
+
+def _dock_metrics(pane) -> dict[str, dict[str, object]]:
+    metrics: dict[str, dict[str, object]] = {}
+    for dock in pane.docks:
+        rect = dock.geometry()
+        metrics[dock.windowTitle()] = {
+            "floating": dock.isFloating(),
+            "visible": dock.isVisible(),
+            "rect": (rect.x(), rect.y(), rect.width(), rect.height()),
+        }
+    return metrics
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +318,7 @@ def capture_all(outdir: str, app: QApplication) -> list[tuple[str, float]]:
         results.append((layout_name, score))
         print(f"diff={score:.2f}  [{region_str}]")
 
-        qt_pane.hide()
-        l_pane.hide()
-        qt_pane.deleteLater()
-        l_pane.deleteLater()
-        app.processEvents()
+        _dispose_panes(app, qt_pane, l_pane)
 
     # Restore global app state
     if saved_style:
@@ -259,6 +335,10 @@ def capture_float_redock_states(outdir: str, app: QApplication) -> list[tuple[st
 
     results: list[tuple[str, float]] = []
     os.makedirs(outdir, exist_ok=True)
+    saved_palette = app.palette()
+    saved_stylesheet = app.styleSheet()
+    saved_style = app.style().objectName() if app.style() else None
+    _apply_demo_style(app)
 
     layout_name = "Balanced"
 
@@ -295,12 +375,7 @@ def capture_float_redock_states(outdir: str, app: QApplication) -> list[tuple[st
         Qt.AspectRatioMode.IgnoreAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
-    diff_main = _make_diff_image(img_qt_main, img_l_main)
-    composite_main = _make_side_by_side(img_qt_main, img_l_main, diff_main, "float_main")
-    QPixmap.fromImage(img_qt_main).save(os.path.join(outdir, "float_main_qt.png"))
-    QPixmap.fromImage(img_l_main).save(os.path.join(outdir, "float_main_l.png"))
-    QPixmap.fromImage(composite_main).save(os.path.join(outdir, "float_main_side_by_side.png"))
-    score_main = _avg_image_diff(img_qt_main, img_l_main)
+    score_main = _save_side_by_side(outdir, "float_main", img_qt_main, img_l_main)
     results.append(("float_main", score_main))
     print(f"diff={score_main:.2f}")
 
@@ -316,12 +391,7 @@ def capture_float_redock_states(outdir: str, app: QApplication) -> list[tuple[st
         Qt.AspectRatioMode.IgnoreAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
-    diff_dock = _make_diff_image(qt_dock_img, l_dock_img)
-    composite_dock = _make_side_by_side(qt_dock_img, l_dock_img, diff_dock, "float_dock")
-    QPixmap.fromImage(qt_dock_img).save(os.path.join(outdir, "float_dock_qt.png"))
-    QPixmap.fromImage(l_dock_img).save(os.path.join(outdir, "float_dock_l.png"))
-    QPixmap.fromImage(composite_dock).save(os.path.join(outdir, "float_dock_side_by_side.png"))
-    score_dock = _avg_image_diff(qt_dock_img, l_dock_img)
+    score_dock = _save_side_by_side(outdir, "float_dock", qt_dock_img, l_dock_img)
     results.append(("float_dock", score_dock))
     print(f"diff={score_dock:.2f}  (expected: large — different chrome by design)")
 
@@ -342,22 +412,167 @@ def capture_float_redock_states(outdir: str, app: QApplication) -> list[tuple[st
         Qt.AspectRatioMode.IgnoreAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
-    diff_redock = _make_diff_image(img_qt_redock, img_l_redock)
-    composite_redock = _make_side_by_side(img_qt_redock, img_l_redock, diff_redock, "redock")
-    QPixmap.fromImage(img_qt_redock).save(os.path.join(outdir, "redock_qt.png"))
-    QPixmap.fromImage(img_l_redock).save(os.path.join(outdir, "redock_l.png"))
-    QPixmap.fromImage(composite_redock).save(os.path.join(outdir, "redock_side_by_side.png"))
-    score_redock = _avg_image_diff(img_qt_redock, img_l_redock)
+    score_redock = _save_side_by_side(outdir, "redock", img_qt_redock, img_l_redock)
     results.append(("redock", score_redock))
     print(f"diff={score_redock:.2f}")
 
-    qt_pane.hide()
-    l_pane.hide()
-    qt_pane.deleteLater()
-    l_pane.deleteLater()
-    app.processEvents()
+    _dispose_panes(app, qt_pane, l_pane)
+    if saved_style:
+        app.setStyle(saved_style)
+    app.setPalette(saved_palette)
+    app.setStyleSheet(saved_stylesheet)
 
     return results
+
+
+def capture_undock_all_state(outdir: str, app: QApplication) -> list[tuple[str, float]]:
+    """Capture the all-docks-floating shell, scene, and per-dock windows."""
+    results: list[tuple[str, float]] = []
+    os.makedirs(outdir, exist_ok=True)
+    saved_palette = app.palette()
+    saved_stylesheet = app.styleSheet()
+    saved_style = app.style().objectName() if app.style() else None
+    _apply_demo_style(app)
+
+    qt_pane = QtComparisonPane()
+    l_pane = LDockingComparisonPane()
+    qt_pane.resize(PANE_SIZE)
+    l_pane.resize(PANE_SIZE)
+    qt_pane.show()
+    l_pane.show()
+    for _ in range(6):
+        app.processEvents()
+
+    layout_name = "Balanced"
+    qt_pane.apply_layout(layout_name)
+    l_pane.apply_layout(layout_name)
+    for _ in range(6):
+        app.processEvents()
+
+    _equalize_pane_sizes(qt_pane, l_pane, layout_name, app)
+
+    print("  Capturing: undock_all_main ...", end=" ", flush=True)
+    for dock in qt_pane.docks:
+        dock.setFloating(True)
+    for dock in l_pane.docks:
+        dock.setFloating(True)
+    for _ in range(10):
+        app.processEvents()
+
+    img_qt_main = qt_pane.window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    img_l_main = l_pane.window.grab().toImage().scaled(
+        WINDOW_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    score_main = _save_side_by_side(outdir, "undock_all_main", img_qt_main, img_l_main)
+    results.append(("undock_all_main", score_main))
+    print(f"diff={score_main:.2f}")
+
+    print("  Capturing: undock_all_scene ...", end=" ", flush=True)
+    score_scene = _save_side_by_side(
+        outdir,
+        "undock_all_scene",
+        _scene_image(qt_pane.docks),
+        _scene_image(l_pane.docks),
+    )
+    results.append(("undock_all_scene", score_scene))
+    print(f"diff={score_scene:.2f}")
+
+    for title in UNDOCK_ALL_DOCKS:
+        stem = f"undock_all_{title.lower()}"
+        print(f"  Capturing: {stem} ...", end=" ", flush=True)
+        score_dock = _save_side_by_side(
+            outdir,
+            stem,
+            _dock_by_title(qt_pane.docks, title).grab().toImage(),
+            _dock_by_title(l_pane.docks, title).grab().toImage(),
+        )
+        results.append((stem, score_dock))
+        print(f"diff={score_dock:.2f}")
+
+    _dispose_panes(app, qt_pane, l_pane)
+    if saved_style:
+        app.setStyle(saved_style)
+    app.setPalette(saved_palette)
+    app.setStyleSheet(saved_stylesheet)
+
+    return results
+
+
+def capture_dynamic_scenarios(
+    outdir: str,
+    app: QApplication,
+) -> tuple[list[tuple[str, float]], dict[str, dict[str, dict[str, dict[str, object]]]]]:
+    """Capture step-by-step action scenarios and return scores plus geometry metrics."""
+    results: list[tuple[str, float]] = []
+    metrics: dict[str, dict[str, dict[str, dict[str, object]]]] = {}
+    os.makedirs(outdir, exist_ok=True)
+    saved_palette = app.palette()
+    saved_stylesheet = app.styleSheet()
+    saved_style = app.style().objectName() if app.style() else None
+    _apply_demo_style(app)
+
+    for scenario_name, scenario in SCENARIOS.items():
+        qt_pane = QtComparisonPane()
+        l_pane = LDockingComparisonPane()
+        qt_pane.resize(PANE_SIZE)
+        l_pane.resize(PANE_SIZE)
+        qt_pane.show()
+        l_pane.show()
+        for _ in range(6):
+            app.processEvents()
+
+        layout_name = str(scenario["layout"])
+        qt_pane.apply_layout(layout_name)
+        l_pane.apply_layout(layout_name)
+        for _ in range(6):
+            app.processEvents()
+        _equalize_pane_sizes(qt_pane, l_pane, layout_name, app)
+
+        scenario_metrics: dict[str, dict[str, dict[str, object]]] = {}
+
+        def _capture_step(step_index: int, label: str) -> None:
+            stem = f"{scenario_name}__{step_index:02d}_{label}"
+            img_qt = qt_pane.window.grab().toImage().scaled(
+                WINDOW_SIZE,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            img_l = l_pane.window.grab().toImage().scaled(
+                WINDOW_SIZE,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            score = _save_side_by_side(outdir, stem, img_qt, img_l)
+            results.append((stem, score))
+            scenario_metrics[label] = {
+                "qt": _dock_metrics(qt_pane),
+                "l": _dock_metrics(l_pane),
+            }
+            print(f"  Capturing: {stem} ... diff={score:.2f}")
+
+        _capture_step(0, "initial")
+
+        for index, action in enumerate(scenario["steps"], start=1):
+            qt_pane.apply_action(action)
+            l_pane.apply_action(action)
+            for _ in range(8):
+                app.processEvents()
+            _capture_step(index, str(action["label"]))
+
+        metrics[scenario_name] = scenario_metrics
+        _dispose_panes(app, qt_pane, l_pane)
+
+    if saved_style:
+        app.setStyle(saved_style)
+    app.setPalette(saved_palette)
+    app.setStyleSheet(saved_stylesheet)
+    return results, metrics
 
 
 def main() -> None:
@@ -369,6 +584,9 @@ def main() -> None:
 
     results = capture_all(args.outdir, app)
     results += capture_float_redock_states(args.outdir, app)
+    results += capture_undock_all_state(args.outdir, app)
+    dynamic_results, _ = capture_dynamic_scenarios(args.outdir, app)
+    results += dynamic_results
 
     print()
     print("=" * 48)

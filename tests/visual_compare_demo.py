@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from ldocking import LDockWidget, LMainWindow
 from dock_panels import make_panel
+from compare_scenarios import SCENARIOS, scenario_names
 
 # Use the real Qt classes even when ldocking.monkey has patched PySide6.QtWidgets.
 try:
@@ -123,6 +124,15 @@ class DockSceneMixin:
     def _float_dock(self, dock) -> None:
         raise NotImplementedError
 
+    def _redock_dock(self, dock) -> None:
+        raise NotImplementedError
+
+    def _move_dock_to_area(self, dock, area: Qt.DockWidgetArea) -> None:
+        raise NotImplementedError
+
+    def _tabify_docks(self, first, second) -> None:
+        raise NotImplementedError
+
     def _post_layout(self, layout_name: str) -> None:
         pass
 
@@ -139,6 +149,45 @@ class DockSceneMixin:
     def float_first(self) -> None:
         if self.docks:
             self._float_dock(self.docks[0])
+
+    def dock_by_title(self, title: str):
+        for dock in self.docks:
+            if dock.windowTitle() == title:
+                return dock
+        raise KeyError(f"Missing dock {title!r}")
+
+    def ensure_dock(self, title: str, area: Qt.DockWidgetArea):
+        try:
+            return self.dock_by_title(title)
+        except KeyError:
+            dock = self._create_dock(title)
+            self._add_dock(area, dock)
+            self.docks.append(dock)
+            return dock
+
+    def apply_action(self, action: dict[str, object]) -> None:
+        op = action["op"]
+        if op == "float":
+            self._float_dock(self.dock_by_title(str(action["title"])))
+        elif op == "redock":
+            self._redock_dock(self.dock_by_title(str(action["title"])))
+        elif op == "move":
+            self._move_dock_to_area(
+                self.dock_by_title(str(action["title"])),
+                action["area"],
+            )
+        elif op == "add":
+            self._move_dock_to_area(
+                self.ensure_dock(str(action["title"]), action["area"]),
+                action["area"],
+            )
+        elif op == "tabify":
+            self._tabify_docks(
+                self.dock_by_title(str(action["first"])),
+                self.dock_by_title(str(action["second"])),
+            )
+        else:
+            raise ValueError(f"Unsupported action op: {op!r}")
 
 
 class QtComparisonPane(QFrame, DockSceneMixin):
@@ -179,6 +228,17 @@ class QtComparisonPane(QFrame, DockSceneMixin):
 
     def _float_dock(self, dock: QDockWidget) -> None:
         dock.setFloating(True)
+
+    def _redock_dock(self, dock: QDockWidget) -> None:
+        dock.setFloating(False)
+
+    def _move_dock_to_area(self, dock: QDockWidget, area: Qt.DockWidgetArea) -> None:
+        if dock.isFloating():
+            dock.setFloating(False)
+        self.window.addDockWidget(area, dock)
+
+    def _tabify_docks(self, first: QDockWidget, second: QDockWidget) -> None:
+        self.window.tabifyDockWidget(first, second)
 
     def _post_layout(self, layout_name: str) -> None:
         if layout_name == "Nested Split" and len(self.docks) >= 3:
@@ -230,6 +290,15 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
     def _float_dock(self, dock: LDockWidget) -> None:
         dock.setFloating(True)
 
+    def _redock_dock(self, dock: LDockWidget) -> None:
+        dock.setFloating(False)
+
+    def _move_dock_to_area(self, dock: LDockWidget, area: Qt.DockWidgetArea) -> None:
+        self.window.addDockWidget(area, dock)
+
+    def _tabify_docks(self, first: LDockWidget, second: LDockWidget) -> None:
+        self.window.tabifyDockWidget(first, second)
+
     def _post_layout(self, layout_name: str) -> None:
         if layout_name == "Nested Split" and len(self.docks) >= 3:
             # Qt's splitDockWidget inserts docks[2] immediately after docks[0].
@@ -250,6 +319,8 @@ class VisualCompareDemo(QWidget):
 
         self._qt = QtComparisonPane()
         self._ldocking = LDockingComparisonPane()
+        self._scenario_steps: list[dict[str, object]] = []
+        self._scenario_index = 0
 
         self._build_ui()
         self._apply_layout("Balanced")
@@ -275,6 +346,17 @@ class VisualCompareDemo(QWidget):
         self._preset.currentTextChanged.connect(self._apply_layout)
         toolbar_layout.addWidget(self._preset)
 
+        toolbar_layout.addWidget(QLabel("Scenario:"))
+        self._scenario = QComboBox()
+        self._scenario.addItem("None")
+        self._scenario.addItems(scenario_names())
+        self._scenario.currentTextChanged.connect(self._select_scenario)
+        toolbar_layout.addWidget(self._scenario)
+
+        step_btn = QPushButton("Run Step")
+        step_btn.clicked.connect(self._run_next_step)
+        toolbar_layout.addWidget(step_btn)
+
         float_btn = QPushButton("Float First Dock")
         float_btn.clicked.connect(self._float_first)
         toolbar_layout.addWidget(float_btn)
@@ -286,8 +368,8 @@ class VisualCompareDemo(QWidget):
         root.addWidget(toolbar)
 
         note = QLabel(
-            "Both panes use the same content and Fusion styling. Focus on title bar height, "
-            "tab treatment, padding, splitter geometry, floating appearance, and the nested/grouped presets."
+            "Both panes use the same content and Fusion styling. Use scenarios to compare dynamic transitions "
+            "like float, redock, and move steps, not just static end states."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color:#475569; padding: 0 2px 4px 2px;")
@@ -302,12 +384,34 @@ class VisualCompareDemo(QWidget):
     def _apply_layout(self, layout_name: str) -> None:
         if layout_name not in LAYOUTS:
             return
+        self._scenario_steps = []
+        self._scenario_index = 0
         self._qt.apply_layout(layout_name)
         self._ldocking.apply_layout(layout_name)
 
     def _float_first(self) -> None:
         self._qt.float_first()
         self._ldocking.float_first()
+
+    def _select_scenario(self, scenario_name: str) -> None:
+        if scenario_name == "None":
+            self._scenario_steps = []
+            self._scenario_index = 0
+            self._apply_layout(self._preset.currentText())
+            return
+        scenario = SCENARIOS[scenario_name]
+        layout_name = str(scenario["layout"])
+        self._preset.setCurrentText(layout_name)
+        self._scenario_steps = list(scenario["steps"])
+        self._scenario_index = 0
+
+    def _run_next_step(self) -> None:
+        if self._scenario.currentText() == "None" or self._scenario_index >= len(self._scenario_steps):
+            return
+        action = self._scenario_steps[self._scenario_index]
+        self._qt.apply_action(action)
+        self._ldocking.apply_action(action)
+        self._scenario_index += 1
 
 
 def _apply_demo_style(app: QApplication) -> None:

@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, QSize, Qt
+from PySide6.QtCore import QByteArray, QPoint, QSize, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -402,15 +402,18 @@ class LMainWindow(QWidget):
                             )
                             return node
                         elif isinstance(central_child, _SplitTree):
-                            # central is already inside a nested H split (e.g. H[central, right]).
-                            # If central is at position 0 in that split, we can safely insert the
-                            # new L/R dock beside central within the nested split, preserving T/B
-                            # sibling span (V[H[central, right], bottom] + left →
-                            # V[H[left, central, right], bottom]).
+                            # central is already inside a nested H split. Keep inserting the
+                            # new L/R dock beside central within that nested split so the outer
+                            # vertical root continues to own any top/bottom full-width panels
+                            # during float/redock cycles:
+                            #   V[H[left, central], bottom] + right →
+                            #   V[H[left, central, right], bottom]
+                            # rather than
+                            #   H[V[H[left, central], bottom], right].
                             cc_central_idx = self._child_index_containing_key(
                                 central_child, target_key
                             )
-                            if cc_central_idx == 0:
+                            if cc_central_idx is not None:
                                 node.children[central_child_idx] = self._insert_leaf_beside_key(
                                     central_child, target_key, leaf, side
                                 )
@@ -1217,6 +1220,16 @@ class LMainWindow(QWidget):
         }
         self._dock_map = {**docked_map, **floating_map}
 
+    def _snapshot_floating_geometries(self) -> None:
+        """Preserve docked geometries before a float-all sequence reshapes siblings."""
+        for dock in self._dock_map:
+            if dock._floating or dock._pending_float_pos is not None:
+                continue
+            if not dock.isVisible():
+                continue
+            dock._pending_float_pos = dock.mapToGlobal(QPoint(0, 0))
+            dock._pending_float_size = dock.size()
+
     def addDockWidget(self, area: Qt.DockWidgetArea, dock: LDockWidget) -> None:
         resolved_area = self._resolve_dock_area(dock, area)
         if resolved_area is None:
@@ -1237,6 +1250,8 @@ class LMainWindow(QWidget):
             return
 
         dock._floating = False
+        dock._pending_float_pos = None
+        dock._pending_float_size = None
         # Clear stale floating window flags (Tool|FramelessHint|StaysOnTop) before
         # the area rebuild so _build_widget can reparent the dock as a plain child
         # widget.  _tab_visibility_sync prevents the implicit hide() from setting

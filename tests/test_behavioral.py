@@ -989,24 +989,47 @@ def test_root_tree_grows_around_central_widget(qapp):
 
     assert _tree_shape(win._content_tree) == (
         "split",
-        int(Qt.Orientation.Horizontal.value),
+        int(Qt.Orientation.Vertical.value),
         (
+            ("leaf", "top"),
             (
                 "split",
-                int(Qt.Orientation.Vertical.value),
+                int(Qt.Orientation.Horizontal.value),
                 (
-                    ("leaf", "top"),
-                    (
-                        "split",
-                        int(Qt.Orientation.Horizontal.value),
-                        (
-                            ("leaf", "left"),
-                            ("leaf", "central"),
-                        ),
-                    ),
+                    ("leaf", "left"),
+                    ("leaf", "central"),
+                    ("leaf", "right"),
                 ),
             ),
-            ("leaf", "right"),
+        ),
+    )
+
+
+def test_right_insert_stays_inside_top_owned_shell(qapp):
+    """Adding a right dock after a top dock keeps top as the outer full-width owner."""
+    win = LMainWindow()
+    top = _dock("top")
+    left = _dock("left")
+    right = _dock("right")
+
+    win.addDockWidget(TopDockWidgetArea, top)
+    win.addDockWidget(LeftDockWidgetArea, left)
+    win.addDockWidget(RightDockWidgetArea, right)
+
+    assert _tree_shape(win._content_tree) == (
+        "split",
+        int(Qt.Orientation.Vertical.value),
+        (
+            ("leaf", "top"),
+            (
+                "split",
+                int(Qt.Orientation.Horizontal.value),
+                (
+                    ("leaf", "left"),
+                    ("leaf", "central"),
+                    ("leaf", "right"),
+                ),
+            ),
         ),
     )
 

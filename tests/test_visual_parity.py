@@ -32,6 +32,7 @@ from ldocking import (
     translate_stylesheet,
 )
 from ldocking.ldrag_manager import _DropTarget
+from dock_panels import make_panel
 
 # Use the real Qt classes for baseline comparisons, even if monkey patch is active.
 try:
@@ -148,6 +149,10 @@ def _assert_rect_close(actual: QRect, expected: QRect, tol: int = GEOM_TOL) -> N
     assert _close_int(actual.y(), expected.y(), tol)
     assert _close_int(actual.width(), expected.width(), tol)
     assert _close_int(actual.height(), expected.height(), tol)
+
+
+def _rectangles_overlap(a: QRect, b: QRect) -> bool:
+    return a.intersected(b).width() > 0 and a.intersected(b).height() > 0
 
 
 def _apply_comparison_style(*widgets: QWidget) -> None:
@@ -850,6 +855,59 @@ def test_splitter_geometry_parity_left_right_bottom_layout(qapp):
     qtmw.hide()
 
 
+def test_right_float_redock_preserves_bottom_span_like_qt(qapp):
+    """Floating and redocking the right dock must not steal width from the bottom dock."""
+    qapp.setStyle("Fusion")
+    lmw = LMainWindow()
+    lmw.resize(720, 460)
+    lmw.setCentralWidget(QLabel("central"))
+    l_left = LDockWidget("Left")
+    l_right = LDockWidget("Right")
+    l_bottom = LDockWidget("Bottom")
+    for dock in (l_left, l_right, l_bottom):
+        dock.setWidget(QLabel(dock.windowTitle()))
+    lmw.addDockWidget(LeftDockWidgetArea, l_left)
+    lmw.addDockWidget(RightDockWidgetArea, l_right)
+    lmw.addDockWidget(BottomDockWidgetArea, l_bottom)
+
+    qtmw = _RealQMainWindow()
+    qtmw.resize(720, 460)
+    qtmw.setCentralWidget(QLabel("central"))
+    q_left = _RealQDockWidget("Left", qtmw)
+    q_right = _RealQDockWidget("Right", qtmw)
+    q_bottom = _RealQDockWidget("Bottom", qtmw)
+    for dock in (q_left, q_right, q_bottom):
+        dock.setWidget(QLabel(dock.windowTitle()))
+    qtmw.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, q_left)
+    qtmw.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, q_right)
+    qtmw.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, q_bottom)
+    _apply_comparison_style(lmw, qtmw)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    l_right.setFloating(True)
+    q_right.setFloating(True)
+    qapp.processEvents()
+    l_right.setFloating(False)
+    q_right.setFloating(False)
+    qapp.processEvents()
+
+    l_right_rect = _global_rect(l_right)
+    l_bottom_rect = _global_rect(l_bottom)
+    q_right_rect = _global_rect(q_right)
+    q_bottom_rect = _global_rect(q_bottom)
+
+    assert _close_int(l_bottom_rect.width(), q_bottom_rect.width(), 30)
+    assert _close_int(l_bottom_rect.right(), q_bottom_rect.right(), 20)
+    assert _close_int(l_right_rect.height(), q_right_rect.height(), 20)
+    assert l_right_rect.bottom() < l_bottom_rect.top()
+    assert q_right_rect.bottom() < q_bottom_rect.top()
+
+    lmw.hide()
+    qtmw.hide()
+
+
 def test_toolbar_shell_geometry_and_screenshot_parity(qapp):
     """Mixed-area shell toolbars keep similar bounds and overall render to Qt."""
     qapp.setStyle("Fusion")
@@ -914,6 +972,82 @@ def test_floating_dock_geometry_and_screenshot_parity(qapp):
     assert diff <= FLOATING_IMAGE_DIFF_TOL
     ldock.hide()
     qtdock.hide()
+
+
+def test_undock_all_floating_scene_preserves_distinct_qt_like_geometries(qapp):
+    """Float-all keeps distinct floating dock windows instead of collapsing them together."""
+    qapp.setStyle("Fusion")
+    lmw = LMainWindow()
+    lmw.resize(760, 720)
+    lmw.setCentralWidget(QLabel("central"))
+    l_docks = []
+    for title, area in (
+        ("Inspector", LeftDockWidgetArea),
+        ("Assets", LeftDockWidgetArea),
+        ("Layers", RightDockWidgetArea),
+        ("Console", BottomDockWidgetArea),
+    ):
+        dock = LDockWidget(title)
+        dock.setWidget(make_panel(title))
+        lmw.addDockWidget(area, dock)
+        l_docks.append(dock)
+
+    qtmw = _RealQMainWindow()
+    qtmw.resize(760, 720)
+    qtmw.setCentralWidget(QLabel("central"))
+    q_docks = []
+    for title, area in (
+        ("Inspector", Qt.DockWidgetArea.LeftDockWidgetArea),
+        ("Assets", Qt.DockWidgetArea.LeftDockWidgetArea),
+        ("Layers", Qt.DockWidgetArea.RightDockWidgetArea),
+        ("Console", Qt.DockWidgetArea.BottomDockWidgetArea),
+    ):
+        dock = _RealQDockWidget(title, qtmw)
+        dock.setWidget(make_panel(title))
+        qtmw.addDockWidget(area, dock)
+        q_docks.append(dock)
+
+    _apply_comparison_style(lmw, qtmw)
+    lmw.show()
+    qtmw.show()
+    qapp.processEvents()
+
+    for dock in l_docks:
+        dock.setFloating(True)
+    for dock in q_docks:
+        dock.setFloating(True)
+    qapp.processEvents()
+
+    l_rects = _named_dock_global_rects(l_docks)
+    q_rects = _named_dock_global_rects(q_docks)
+    assert set(l_rects) == set(q_rects) == {"Inspector", "Assets", "Layers", "Console"}
+
+    assert not _rectangles_overlap(l_rects["Inspector"], l_rects["Assets"])
+    assert not _rectangles_overlap(l_rects["Inspector"], l_rects["Layers"])
+    assert not _rectangles_overlap(l_rects["Assets"], l_rects["Layers"])
+    assert not _rectangles_overlap(l_rects["Console"], l_rects["Inspector"])
+    assert not _rectangles_overlap(l_rects["Console"], l_rects["Assets"])
+    assert not _rectangles_overlap(l_rects["Console"], l_rects["Layers"])
+
+    import screenshot_compare as sc
+
+    scene_diff = sc._avg_image_diff(sc._scene_image(q_docks), sc._scene_image(l_docks))
+    assert scene_diff <= 18.0
+
+    per_dock = {
+        name: sc._avg_image_diff(
+            next(d for d in q_docks if d.windowTitle() == name).grab().toImage(),
+            next(d for d in l_docks if d.windowTitle() == name).grab().toImage(),
+        )
+        for name in ("Inspector", "Assets", "Layers", "Console")
+    }
+    assert per_dock["Layers"] <= FLOATING_IMAGE_DIFF_TOL
+    assert per_dock["Console"] <= FLOATING_IMAGE_DIFF_TOL
+    assert per_dock["Inspector"] <= 30.0
+    assert per_dock["Assets"] <= 45.0
+
+    lmw.hide()
+    qtmw.hide()
 
 
 def test_nested_layout_named_dock_geometry_parity(qapp):

@@ -2,6 +2,7 @@
 import importlib
 import sys
 import os
+from types import ModuleType
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -10,9 +11,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
 import ldocking.monkey as monkey
+import ldocking.bootstrap as bootstrap
 from ldocking import LDockWidget, LMainWindow
 
 FIXTURE_PREFIX = "tools.dock_benchmarks.fixtures"
+_TEST_LEAK_EXCLUDES = (
+    "test_",
+    "parity_test",
+    "visual_compare_demo",
+)
 
 
 def _clear_fixture_modules():
@@ -227,3 +234,62 @@ def test_qapplication_stylesheet_translation_disabled_after_unpatch(qapp):
     finally:
         qapp.setStyleSheet("")
         monkey.patch()
+
+
+def test_bootstrap_activate_reports_clean_runtime(qapp):
+    _clear_fixture_modules()
+    leak_module = ModuleType("fake_clean_runtime")
+    sys.modules[leak_module.__name__] = leak_module
+    try:
+        report = bootstrap.activate(exclude_prefixes=_TEST_LEAK_EXCLUDES)
+        assert report.patched is True
+        assert report.requested is True
+        assert report.stylesheet_translation_active is True
+        assert report.import_order_ok is True
+        assert report.leaks == ()
+    finally:
+        sys.modules.pop(leak_module.__name__, None)
+
+
+def test_bootstrap_detects_late_import_binding_leak(qapp):
+    leak_module = ModuleType("fake_late_import")
+    leak_module.QMainWindow = monkey._ORIG["QMainWindow"]
+    leak_module.QDockWidget = monkey._ORIG["QDockWidget"]
+    sys.modules[leak_module.__name__] = leak_module
+    try:
+        monkey.patch()
+        report = bootstrap.describe_runtime(exclude_prefixes=_TEST_LEAK_EXCLUDES)
+        assert report.import_order_ok is False
+        assert any(leak.module == "fake_late_import" and leak.attr == "QMainWindow" for leak in report.leaks)
+        assert any(leak.module == "fake_late_import" and leak.attr == "QDockWidget" for leak in report.leaks)
+    finally:
+        sys.modules.pop(leak_module.__name__, None)
+
+
+def test_bootstrap_strict_mode_raises_on_late_import_leak(qapp):
+    leak_module = ModuleType("fake_strict_late_import")
+    leak_module.QMainWindow = monkey._ORIG["QMainWindow"]
+    sys.modules[leak_module.__name__] = leak_module
+    try:
+        with pytest.raises(RuntimeError, match="fake_strict_late_import"):
+            bootstrap.activate(strict=True, exclude_prefixes=_TEST_LEAK_EXCLUDES)
+    finally:
+        sys.modules.pop(leak_module.__name__, None)
+
+
+def test_bootstrap_activate_from_env_can_disable_patch(qapp, monkeypatch):
+    monkeypatch.setenv("LDOCKING_PATCH", "0")
+    report = bootstrap.activate_from_env(exclude_prefixes=_TEST_LEAK_EXCLUDES)
+    assert report.requested is False
+    assert report.patched is False
+    assert report.stylesheet_translation_active is False
+    monkey.patch()
+
+
+def test_bootstrap_activate_from_env_can_enable_patch(qapp, monkeypatch):
+    monkey.unpatch()
+    monkeypatch.setenv("LDOCKING_PATCH", "1")
+    report = bootstrap.activate_from_env(exclude_prefixes=_TEST_LEAK_EXCLUDES)
+    assert report.requested is True
+    assert report.patched is True
+    assert report.stylesheet_translation_active is True

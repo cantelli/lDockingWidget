@@ -114,15 +114,14 @@ LMainWindow (QVBoxLayout)
 4. `mouseReleaseEvent` → `addDockWidget` on target, or leave floating
 5. `Escape` → cancel, return to origin
 
-## Intentional No-ops
+## Supported Compatibility Features
 
-| Method | Reason |
-|---|---|
-| `LMainWindow.setCorner()` | Corner ownership is implicit in the splitter geometry |
-| `LMainWindow.addToolBarBreak()` | Single toolbar row — line breaks not supported |
-| `LMainWindow.removeToolBarBreak()` | (same) |
-| `LMainWindow.insertToolBarBreak()` | (same) |
-| `LMainWindow.toolBarBreak()` | Always returns `False` |
+These behaviors are implemented and covered by tests:
+
+- `LMainWindow.setCorner()` controls toolbar-corner ownership.
+- `addToolBarBreak()`, `removeToolBarBreak()`, `insertToolBarBreak()`, and `toolBarBreak()` support toolbar break rows in all toolbar areas.
+- `restoreDockWidget()` supports late-created docks, including saved floating and tabbed restore cases.
+- `saveQtState()` / native `restoreState()` interop work for the documented supported subset.
 
 ## Conventions
 
@@ -134,3 +133,4 @@ LMainWindow (QVBoxLayout)
 - `WA_StyledBackground` must be set on any `QWidget` subclass that needs QSS `background-color` rules to work. Currently set on `LMainWindow`, `LDockWidget`, `LDockArea`, and `LTitleBar`.
 - `ldocking/monkey.py` patches `PySide6.QtWidgets` module attributes at import time. `_ORIG` is captured at module load (not inside `patch()`), so calling `patch()` twice is safe. Tests that need real Qt classes must use `monkey._ORIG["QMainWindow"]` / `monkey._ORIG["QDockWidget"]` rather than importing from `PySide6.QtWidgets` directly (the patched names would return L* classes).
 - **Import order for monkey patch**: `import ldocking.monkey` must appear before any other import that pulls in `QMainWindow` or `QDockWidget`. Place it as the very first import in `main.py`.
+- `ldocking.bootstrap.activate()` is the preferred startup helper when you want patching plus diagnostics. It reports late-imported native bindings that escaped the patch and supports env-driven activation through `LDOCKING_PATCH`.

@@ -31,6 +31,7 @@ Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses th
 - `restoreDockWidget()` is supported for docks that are created after `restoreState()`.
 - `setCorner()` now controls toolbar-corner ownership for the four-area toolbar shell.
 - Docked chrome, tabs, toolbars, corners, and saved-state behavior are the primary parity targets; floating docks intentionally remain a frameless `Qt.Tool + FramelessWindowHint` presentation and are visually close to Qt rather than pixel-identical.
+- Monkey patching now has a higher-level bootstrap path with runtime diagnostics for import-order leaks; native `QMainWindow` / `QDockWidget` bindings imported before patching are detected and reported.
 
 ## Installation
 
@@ -63,6 +64,34 @@ monkey.is_patched()   # → bool
 ```
 
 > **Import order matters.** Any `from PySide6.QtWidgets import QMainWindow` that runs *before* `import ldocking.monkey` will get the original Qt class. Place the monkey-patch import first.
+
+### Bootstrap + diagnostics
+
+For app startup code, prefer the higher-level bootstrap helper:
+
+```python
+from ldocking.bootstrap import activate
+
+report = activate(validate=True)
+if not report.import_order_ok:
+    print(report.format())
+```
+
+`activate()` patches Qt, confirms stylesheet translation is active, and reports any
+module globals that still reference the original Qt docking classes because they were
+imported too early.
+
+If you want launcher-controlled fallback mode, `activate_from_env()` reads
+`LDOCKING_PATCH`:
+
+```python
+from ldocking.bootstrap import activate_from_env
+
+report = activate_from_env()  # "1"/"true"/"on" enables, "0"/"false"/"off" disables
+```
+
+This is useful for CI, staged rollouts, or a crash-only fallback mode without
+rewriting the rest of the app bootstrap.
 
 ---
 
