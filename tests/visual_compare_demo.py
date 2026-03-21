@@ -232,8 +232,11 @@ class LDockingComparisonPane(QFrame, DockSceneMixin):
 
     def _post_layout(self, layout_name: str) -> None:
         if layout_name == "Nested Split" and len(self.docks) >= 3:
-            self.window.tabifyDockWidget(self.docks[0], self.docks[1])
+            # Qt's splitDockWidget inserts docks[2] immediately after docks[0].
+            # tabifyDockWidget appends at end, so tabify docks[2] first so it
+            # lands at position 1, then docks[1] appends at the end — matching Qt.
             self.window.tabifyDockWidget(self.docks[0], self.docks[2])
+            self.window.tabifyDockWidget(self.docks[0], self.docks[1])
         elif layout_name == "Grouped Tabs" and len(self.docks) >= 3:
             self.window.tabifyDockWidget(self.docks[0], self.docks[1])
             self.window.tabifyDockWidget(self.docks[0], self.docks[2])
