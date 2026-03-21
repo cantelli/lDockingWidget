@@ -19,13 +19,13 @@ Eliminates `QDockAreaLayout` (private Qt C++ class) to fix a crash when all dock
 ## Running Tests
 
 ```bash
-pytest -v                            # full suite (primary)
-pytest tests/test_api_compat.py -v  # API surface: 38 assertions
+python -m pytest -v                  # full suite (primary)
+python -m pytest tests/test_api_compat.py -v  # API surface: 38 assertions
 python tests/phase0_bug_demo.py     # reproduces the original Qt crash
 python tests/demo_app.py            # full visual demo
 ```
 
-Run `pytest -v` after any changes. All tests run headlessly via `QT_QPA_PLATFORM=offscreen` (set in `tests/conftest.py`).
+Run `python -m pytest -v` after any changes. All tests run headlessly via `QT_QPA_PLATFORM=offscreen` (set in `tests/conftest.py`).
 
 ## Parity Workflow
 
@@ -50,8 +50,8 @@ the highest diff scores (especially the `left` sub-score).
 
 ### 3. Fix
 
-Identify the root cause in `ldocking/` source code and fix it. Run `pytest -v` after every change
-to confirm no regressions (240 tests, all headless).
+Identify the root cause in `ldocking/` source code and fix it. Run `python -m pytest -v` after every change
+to confirm no regressions (`250` tests currently, all headless).
 
 ### 4. Verify and repeat
 
@@ -93,11 +93,16 @@ python tests/demo_app.py             # full ldocking demo app
 LMainWindow (QVBoxLayout)
 ├── MenuBar
 ├── ToolBars
-├── outer_splitter (Horizontal): left_area | inner_splitter | right_area
-│                                             inner_splitter (Vertical):
-│                                               top_area | central | bottom_area
+├── content_tree (authoritative recursive split tree)
+│   ├── dock side leaf / nested split
+│   ├── central widget
+│   └── dock side leaf / nested split
 └── StatusBar
 ```
+
+`outer_splitter`, `inner_splitter`, and side `LDockArea` widgets remain compatibility-facing
+structures rebuilt from the content tree so existing APIs, tests, and stylesheet selectors
+continue to work.
 
 ### LDockArea transitions
 
@@ -122,6 +127,7 @@ These behaviors are implemented and covered by tests:
 - `addToolBarBreak()`, `removeToolBarBreak()`, `insertToolBarBreak()`, and `toolBarBreak()` support toolbar break rows in all toolbar areas.
 - `restoreDockWidget()` supports late-created docks, including saved floating and tabbed restore cases.
 - `saveQtState()` / native `restoreState()` interop work for the documented supported subset.
+- Screenshot parity coverage exists in `tests/test_visual_parity.py` and `tests/test_screenshot_compare.py`; use those plus direct PNG inspection when closing visual gaps.
 
 ## Conventions
 

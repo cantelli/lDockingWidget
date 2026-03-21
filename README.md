@@ -36,7 +36,7 @@ Replace `QMainWindow` and `QDockWidget` with pure-Python `QWidget` subclasses th
 ## Installation
 
 ```bash
-pip install -e .   # editable from repo root
+python -m pip install -e .   # editable from repo root
 # or copy the ldocking/ directory into your project
 ```
 
@@ -270,20 +270,26 @@ LDockWidget > #dockContent {
 
 ```bash
 # pytest suite (headless, uses offscreen QPA)
-pytest -v
+python -m pytest -v
 
 # Individual test modules
-pytest tests/test_api_compat.py -v   # 38 API surface assertions
-pytest tests/test_stability.py -v   # float-all-redock cycle
-pytest tests/test_state.py -v       # saveState / restoreState
-pytest tests/test_api_gaps.py -v    # isAreaAllowed, toolbar, createPopupMenu
+python -m pytest tests/test_api_compat.py -v   # 38 API surface assertions
+python -m pytest tests/test_stability.py -v    # float-all-redock cycle
+python -m pytest tests/test_state.py -v        # saveState / restoreState
+python -m pytest tests/test_api_gaps.py -v     # isAreaAllowed, toolbar, createPopupMenu
+python -m pytest tests/test_visual_parity.py -v
+python -m pytest tests/test_screenshot_compare.py -v
 
 # Legacy standalone scripts (not collected by pytest)
 python tests/phase0_bug_demo.py     # reproduce the original Qt crash
 python tests/phase2_docking.py      # float-all no-crash smoke test
 python tests/demo_app.py            # full visual demo
 python tests/visual_compare_demo.py # side-by-side Qt vs ldocking visual comparison
+python tests/screenshot_compare.py  # writes Qt vs ldocking screenshot pairs
 ```
+
+Current repo status at the time of this documentation update: `python -m pytest -q`
+passes with `250` tests.
 
 ## Design Notes
 
