@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QWidget
 
 import ldocking.monkey as monkey
 from ldocking import (
@@ -596,6 +596,71 @@ def test_toggle_view_action_restores_hidden_floating_dock(qapp):
 
     assert dock.isVisible()
     assert dock.isFloating()
+
+
+def test_frameless_main_window_preserves_dock_float_cycle(qapp):
+    win = LMainWindow()
+    win.setWindowFlags(win.windowFlags() | Qt.WindowType.FramelessWindowHint)
+    dock = _dock("dock")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    win.show()
+    qapp.processEvents()
+
+    assert bool(win.windowFlags() & Qt.WindowType.FramelessWindowHint)
+    assert dock.isVisible()
+    assert win.dockWidgetArea(dock) == LeftDockWidgetArea
+
+    dock.setFloating(True)
+    qapp.processEvents()
+
+    assert dock.isFloating()
+    assert dock.isVisible()
+    assert bool(win.windowFlags() & Qt.WindowType.FramelessWindowHint)
+
+    dock.setFloating(False)
+    qapp.processEvents()
+
+    assert not dock.isFloating()
+    assert dock.isVisible()
+    assert win.dockWidgetArea(dock) == LeftDockWidgetArea
+
+
+def test_custom_title_bar_widget_survives_float_redock_in_frameless_window(qapp):
+    win = LMainWindow()
+    win.setWindowFlags(win.windowFlags() | Qt.WindowType.FramelessWindowHint)
+    dock = _dock("dock")
+    custom_title = QWidget()
+    custom_title.setObjectName("customTitleBar")
+    custom_title.setMinimumHeight(28)
+    dock.setTitleBarWidget(custom_title)
+    dock.setWindowTitle("Renamed Dock")
+    win.addDockWidget(LeftDockWidgetArea, dock)
+    win.show()
+    qapp.processEvents()
+
+    assert dock.titleBarWidget() is custom_title
+    assert custom_title.isVisible()
+    assert custom_title.parent() is dock
+    assert dock._title_bar.isHidden()
+
+    dock.setFloating(True)
+    qapp.processEvents()
+
+    assert dock.isFloating()
+    assert dock.isVisible()
+    assert dock.titleBarWidget() is custom_title
+    assert custom_title.isVisible()
+    assert custom_title.parent() is dock
+
+    dock.setFloating(False)
+    qapp.processEvents()
+
+    assert not dock.isFloating()
+    assert dock.isVisible()
+    assert win.dockWidgetArea(dock) == LeftDockWidgetArea
+    assert dock.titleBarWidget() is custom_title
+    assert custom_title.isVisible()
+    assert custom_title.parent() is dock
 
 
 def test_tabified_dock_remains_visible_when_floated_like_native_qt(qapp):

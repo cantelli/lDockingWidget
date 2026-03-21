@@ -395,7 +395,10 @@ class LDockArea(QWidget):
                     dock.minimumSizeHint().expandedTo(dock.minimumSize())
                 ).boundedTo(dock.maximumSize())
                 dock.resize(bounded)
-            dock._title_bar.show()
+            if dock.titleBarWidget() is None:
+                dock._title_bar.show()
+            else:
+                dock._title_bar.hide()
             dock._tab_visibility_sync = True
             if dock._explicitly_hidden:
                 dock.hide()
