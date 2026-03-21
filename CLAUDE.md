@@ -27,6 +27,49 @@ python tests/demo_app.py            # full visual demo
 
 Run `pytest -v` after any changes. All tests run headlessly via `QT_QPA_PLATFORM=offscreen` (set in `tests/conftest.py`).
 
+## Parity Workflow
+
+The primary development loop for this project is closing visual and behavioral gaps between
+`LDockWidget`/`LMainWindow` and stock `QDockWidget`/`QMainWindow`. Follow this cycle:
+
+### 1. Take screenshots
+
+```bash
+python tests/screenshot_compare.py   # renders all presets headlessly; writes tests/screenshots/
+```
+
+This writes paired PNGs: `tests/screenshots/<preset>_qt.png` (reference) and
+`tests/screenshots/<preset>_l.png` (our implementation), plus a diff score summary.
+
+### 2. Assess differences
+
+**Always read the actual PNG files directly** using the Read tool — do not rely on diff scores alone.
+Diff scores are summary statistics; the images reveal exact panel sizes, tab order, scrollbar presence,
+and whitespace. Compare `*_qt.png` vs `*_l.png` for each preset, focusing on presets with
+the highest diff scores (especially the `left` sub-score).
+
+### 3. Fix
+
+Identify the root cause in `ldocking/` source code and fix it. Run `pytest -v` after every change
+to confirm no regressions (240 tests, all headless).
+
+### 4. Verify and repeat
+
+Re-run `screenshot_compare.py`, re-read the PNGs, confirm the gap is closed, then move to the
+next discrepancy. Continue until ldocking looks identical to Qt for all presets.
+
+### Key rule
+
+Always fix ldocking behavior to match Qt — never adjust the test app or expected values to paper over
+a difference.
+
+### Manual side-by-side demo
+
+```bash
+python tests/visual_compare_demo.py  # live Qt vs ldocking side-by-side window
+python tests/demo_app.py             # full ldocking demo app
+```
+
 ## File Responsibilities
 
 | File | Responsibility |
