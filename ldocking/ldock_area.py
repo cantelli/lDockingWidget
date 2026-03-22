@@ -147,7 +147,7 @@ class LDockArea(QWidget):
     def add_dock(self, dock: LDockWidget, index: int | None = None) -> None:
         if dock in self._dock_to_node:
             return
-        dock._current_area = self
+        dock.attach_to_area(self)
         if dock not in self._insertion_order:
             self._insertion_order[dock] = len(self._insertion_order)
 
@@ -178,8 +178,7 @@ class LDockArea(QWidget):
         if self._root is None or dock not in self._dock_to_node:
             return
         self._root = self._remove_from_node(self._root, dock)
-        if dock._current_area is self:
-            dock._current_area = None
+        dock.detach_from_area(self)
         self._dock_to_node.pop(dock, None)
         self._rebuild()
 
@@ -204,6 +203,9 @@ class LDockArea(QWidget):
         if isinstance(node, _TabNode):
             return [candidate for candidate in node.docks if candidate is not dock]
         return []
+
+    def is_tabified_dock(self, dock: LDockWidget) -> bool:
+        return isinstance(self._dock_to_node.get(dock), _TabNode)
 
     def drop_target_at_global_pos(
         self, global_pos
@@ -278,6 +280,11 @@ class LDockArea(QWidget):
 
     def current_tab_dock(self) -> LDockWidget | None:
         return self._current_tab_in_node(self._root)
+
+    def dock_insertion_index(self, dock: LDockWidget) -> int:
+        if dock in self._insertion_order:
+            return self._insertion_order[dock]
+        return self._docks.index(dock) if dock in self._docks else 0
 
     def set_current_tab_dock(self, dock: LDockWidget) -> None:
         node = self._dock_to_node.get(dock)
@@ -378,33 +385,30 @@ class LDockArea(QWidget):
     def _detach_docks(self) -> None:
         for dock in self._docks:
             if dock.parent() is not None:
-                dock._tab_visibility_sync = True
+                dock.set_tab_visibility_sync(True)
                 dock.setParent(None)
-                dock._tab_visibility_sync = False
+                dock.set_tab_visibility_sync(False)
 
     def _build_widget(self, node: object, parent: QWidget) -> QWidget:
         if isinstance(node, _DockNode):
             dock = node.dock
             self._dock_to_node[dock] = node
-            dock._current_area = self
-            dock._set_tabbed_visibility_override(None)
+            dock.attach_to_area(self)
+            dock.set_tabbed_visibility_override(None)
             dock.setParent(parent)
-            restored_size = getattr(dock, "_restored_docked_size", None)
+            restored_size = dock.restored_docked_size()
             if restored_size is not None and restored_size.isValid():
                 bounded = restored_size.expandedTo(
                     dock.minimumSizeHint().expandedTo(dock.minimumSize())
                 ).boundedTo(dock.maximumSize())
                 dock.resize(bounded)
-            if dock.titleBarWidget() is None:
-                dock._title_bar.show()
-            else:
-                dock._title_bar.hide()
-            dock._tab_visibility_sync = True
-            if dock._explicitly_hidden:
+            dock.show_builtin_title_bar()
+            dock.set_tab_visibility_sync(True)
+            if dock.is_explicitly_hidden():
                 dock.hide()
             else:
                 dock.show()
-            dock._tab_visibility_sync = False
+            dock.set_tab_visibility_sync(False)
             return dock
 
         if isinstance(node, _TabNode):
@@ -414,8 +418,9 @@ class LDockArea(QWidget):
             desired_current_index = min(node.current_index, len(node.docks) - 1) if node.docks else 0
             for dock in node.docks:
                 self._dock_to_node[dock] = node
-                dock._current_area = self
+                dock.attach_to_area(self)
                 tab_area.add_dock(dock)
+            tab_area.clear_hidden_docks()
             tab_area.currentDockChanged.connect(
                 lambda dock, n=node: self._on_tab_current_changed(n, dock)
             )
@@ -648,9 +653,9 @@ class LDockArea(QWidget):
             if item and item.widget():
                 widget = item.widget()
                 if isinstance(widget, LDockWidget):
-                    widget._tab_visibility_sync = True
+                    widget.set_tab_visibility_sync(True)
                     widget.hide()
-                    widget._tab_visibility_sync = False
+                    widget.set_tab_visibility_sync(False)
                 else:
                     widget.hide()
                 widget.setParent(None)

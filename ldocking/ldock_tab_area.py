@@ -110,7 +110,7 @@ class LDockTabArea(QWidget):
         self._stack.addWidget(dock)
         self._tab_bar.addTab(dock.windowTitle())
         self._hidden_docks.discard(dock)
-        dock._explicitly_hidden = False
+        dock.set_explicit_hidden(False)
         self._exposed_docks.setdefault(dock, False)
         if hasattr(dock, "windowTitleChanged"):
             conn = dock.windowTitleChanged.connect(
@@ -128,10 +128,10 @@ class LDockTabArea(QWidget):
         idx = self._docks.index(dock)
         self._docks.pop(idx)
         self._stack.removeWidget(dock)
-        dock._set_tabbed_visibility_override(None)
-        dock._tab_visibility_sync = True
+        dock.set_tabbed_visibility_override(None)
+        dock.set_tab_visibility_sync(True)
         dock.show()
-        dock._tab_visibility_sync = False
+        dock.set_tab_visibility_sync(False)
         self._tab_bar.removeTab(idx)
         self._title_connections.pop(dock, None)
         self._hidden_docks.discard(dock)
@@ -204,6 +204,9 @@ class LDockTabArea(QWidget):
         self._layout.setDirection(direction)
         self._tab_bar.setShape(shape)
 
+    def clear_hidden_docks(self) -> None:
+        self._hidden_docks.clear()
+
     def _on_tab_changed(self, index: int) -> None:
         previous = self.dock_at(self._last_current_index)
         desired = self._normalized_current_index(index)
@@ -243,15 +246,21 @@ class LDockTabArea(QWidget):
         if visible and not is_visible:
             dock.visibilityChanged.emit(False)
         elif was_visible != is_visible:
-            dock._sync_toggle_action_checked()
+            dock.sync_toggle_action_checked()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        self._sync_visibility()
+        try:
+            self._sync_visibility()
+        except RuntimeError:
+            return
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
-        self._sync_visibility()
+        try:
+            self._sync_visibility()
+        except RuntimeError:
+            return
 
     def _first_unhidden_index(self) -> int:
         for index, dock in enumerate(self._docks):
@@ -285,13 +294,15 @@ class LDockTabArea(QWidget):
         for index, dock in enumerate(self._docks):
             externally_visible = tab_area_visible and dock not in self._hidden_docks
             exposed = externally_visible and index == current_index
-            dock._set_tabbed_visibility_override(externally_visible)
-            dock._tab_visibility_sync = True
+            if dock not in self._hidden_docks:
+                dock.set_explicit_hidden(False)
+            dock.set_tabbed_visibility_override(externally_visible)
+            dock.set_tab_visibility_sync(True)
             if exposed:
                 dock.show()
             else:
                 dock.hide()
-            dock._tab_visibility_sync = False
+            dock.set_tab_visibility_sync(False)
             previous_exposed = self._exposed_docks.get(dock)
             if previous_exposed is None:
                 self._exposed_docks[dock] = exposed
@@ -303,14 +314,17 @@ class LDockTabArea(QWidget):
 
     def _set_stack_current_index(self, index: int) -> None:
         for dock in self._docks:
-            dock._tab_visibility_sync = True
-        self._stack.setCurrentIndex(index)
+            dock.set_tab_visibility_sync(True)
+        self._stack.setCurrentIndex(max(index, 0))
         for dock in self._docks:
-            dock._tab_visibility_sync = False
+            dock.set_tab_visibility_sync(False)
 
     def _sync_dock_sizes(self) -> None:
         for dock in self._docks:
-            base = self._preferred_sizes.get(dock, dock.size())
+            try:
+                base = self._preferred_sizes.get(dock, dock.size())
+            except RuntimeError:
+                continue
             if not base.isValid():
                 base = dock.sizeHint()
             bounded = base.expandedTo(

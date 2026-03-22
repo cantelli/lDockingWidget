@@ -68,17 +68,17 @@ class LDragManager(QObject):
         payload = payload or [dock]
         self._dock = dock
         self._payload = list(payload)
-        self._origin_area = dock._current_area
+        self._origin_area = dock.current_area()
         self._origin_area_side = (
-            dock._current_area._area_side if dock._current_area else None
+            dock.area_side()
         )
-        self._origin_main_window = dock._main_window
-        if dock._current_area is not None:
-            dock._pre_float_area_side = dock._current_area._area_side
+        self._origin_main_window = dock.main_window()
+        if dock.current_area() is not None:
+            dock.set_pre_float_area_side(dock.area_side())
             for payload_dock in list(self._payload):
-                dock._current_area.remove_dock(payload_dock)
-            if dock._main_window is not None:
-                dock._main_window._sync_content_tree_to_areas()
+                dock.current_area().remove_dock(payload_dock)
+            if dock.main_window() is not None:
+                dock.main_window().sync_layout_state_from_areas()
 
         dock.setParent(None)
         flags = (
@@ -96,9 +96,9 @@ class LDragManager(QObject):
         dock.show()
         dock.raise_()
         dock.activateWindow()
-        dock._floating = True
+        dock.prepare_as_floating_dock()
         for payload_dock in self._payload:
-            payload_dock._floating = True
+            payload_dock.prepare_as_floating_dock()
             if payload_dock is not dock:
                 payload_dock.hide()
 
@@ -120,12 +120,12 @@ class LDragManager(QObject):
         self._reset()
 
         if mw is not None and side is not None:
-            mw._drop_docks(side, payload)
+            mw.drop_docks(side, payload)
             for payload_dock in payload:
                 payload_dock.topLevelChanged.emit(False)
         else:
             for payload_dock in payload:
-                payload_dock._floating = True
+                payload_dock.prepare_as_floating_dock()
                 if payload_dock is dock:
                     payload_dock.show()
                 else:
@@ -180,7 +180,7 @@ class LDragManager(QObject):
 
         if drop is not None:
             mw = drop.main_window
-            drop.main_window._drop_docks(
+            drop.main_window.drop_docks(
                 drop.area_side,
                 payload,
                 mode=drop.mode,
@@ -193,7 +193,7 @@ class LDragManager(QObject):
                 payload_dock.topLevelChanged.emit(False)
         else:
             for payload_dock in payload:
-                payload_dock._floating = True
+                payload_dock.prepare_as_floating_dock()
                 if payload_dock is dock:
                     payload_dock.show()
                 else:
@@ -241,7 +241,7 @@ class LDragManager(QObject):
             area_local = area.mapFromGlobal(global_pos)
             if not area.rect().contains(area_local):
                 continue
-            if self._dock is not None and not self._dock.isAreaAllowed(area._area_side):
+            if self._dock is not None and not self._dock.isAreaAllowed(area.area_side):
                 return None
 
             target_info = area.drop_target_at_global_pos(global_pos)
@@ -257,18 +257,18 @@ class LDragManager(QObject):
                 if tab_bar_hit or center_rect.contains(dock_local):
                     return _DropTarget(
                         mw,
-                        area._area_side,
+                        area.area_side,
                         "tab",
                         target_dock=target_dock,
-                        target_id=mw._dock_id(target_dock),
+                        target_id=mw.dock_identifier(target_dock),
                         target_rect=target_rect,
                     )
                 return _DropTarget(
                     mw,
-                    area._area_side,
+                    area.area_side,
                     "side",
                     target_dock=target_dock,
-                    target_id=mw._dock_id(target_dock),
+                    target_id=mw.dock_identifier(target_dock),
                     target_rect=target_rect,
                     relative_side=self._relative_side(
                         QRect(QPoint(0, 0), target_rect.size()),
@@ -279,13 +279,13 @@ class LDragManager(QObject):
             if self._compute_area_tab_rect(area).contains(area_local):
                 return _DropTarget(
                     mw,
-                    area._area_side,
+                    area.area_side,
                     "tab",
                     target_rect=QRect(area.mapToGlobal(area.rect().topLeft()), area.size()),
                 )
             return _DropTarget(
                 mw,
-                area._area_side,
+                area.area_side,
                 "area",
                 target_rect=QRect(area.mapToGlobal(area.rect().topLeft()), area.size()),
             )

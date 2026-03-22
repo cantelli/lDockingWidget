@@ -21,6 +21,7 @@ _TEST_LEAK_EXCLUDES = (
     "test_",
     "parity_test",
     "visual_compare_demo",
+    "dockwidgets_test_",
 )
 
 

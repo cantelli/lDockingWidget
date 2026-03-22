@@ -159,15 +159,9 @@ class LDockWidget(QWidget):
         if self._custom_title_bar is not None:
             self._custom_title_bar.setParent(None)
         self._custom_title_bar = widget
-        # Remove default title bar
-        if widget is None:
-            if self._title_bar.parent() is None:
-                self._outer_layout.insertWidget(0, self._title_bar)
-            self._title_bar.show()
-        else:
-            self._title_bar.hide()
-            self._title_bar.setParent(None)
+        if widget is not None:
             self._outer_layout.insertWidget(0, widget)
+        self._sync_title_bar_widgets()
 
     def titleBarWidget(self) -> QWidget | None:
         return self._custom_title_bar
@@ -242,6 +236,132 @@ class LDockWidget(QWidget):
         return super().close()
 
     # ------------------------------------------------------------------
+    # Internal collaborator API
+    # ------------------------------------------------------------------
+
+    def has_custom_title_bar(self) -> bool:
+        return self._custom_title_bar is not None
+
+    def builtin_title_bar(self) -> LTitleBar:
+        return self._title_bar
+
+    def show_builtin_title_bar(self) -> None:
+        self._sync_title_bar_widgets()
+
+    def hide_builtin_title_bar(self) -> None:
+        self._title_bar.hide()
+
+    def attach_to_area(self, area: LDockArea) -> None:
+        self._current_area = area
+
+    def detach_from_area(self, area: LDockArea) -> None:
+        if self._current_area is area:
+            self._current_area = None
+
+    def current_area(self) -> LDockArea | None:
+        return self._current_area
+
+    def area_side(self) -> Qt.DockWidgetArea | None:
+        return self._current_area.area_side if self._current_area is not None else None
+
+    def bind_main_window(self, window: LMainWindow) -> None:
+        self._main_window = window
+
+    def clear_main_window(self, window: LMainWindow | None = None) -> None:
+        if window is None or self._main_window is window:
+            self._main_window = None
+
+    def main_window(self) -> LMainWindow | None:
+        return self._main_window
+
+    def set_tabbed_visibility_override(self, visible: bool | None) -> None:
+        self._set_tabbed_visibility_override(visible)
+
+    def set_tab_visibility_sync(self, syncing: bool) -> None:
+        self._tab_visibility_sync = syncing
+
+    def set_explicit_hidden(self, hidden: bool) -> None:
+        self._explicitly_hidden = hidden
+
+    def is_explicitly_hidden(self) -> bool:
+        return self._explicitly_hidden
+
+    def sync_toggle_action_checked(self) -> None:
+        self._sync_toggle_action_checked()
+
+    def clear_pending_float_geometry(self) -> None:
+        self._pending_float_pos = None
+        self._pending_float_size = None
+
+    def capture_pending_float_geometry(self) -> None:
+        if self._floating or self._pending_float_pos is not None or not self.isVisible():
+            return
+        self._pending_float_pos = self.mapToGlobal(QPoint(0, 0))
+        self._pending_float_size = self.size()
+
+    def prepare_as_child_dock(self) -> None:
+        self._floating = False
+        self.clear_pending_float_geometry()
+        self._tab_visibility_sync = True
+        self.setParent(None, Qt.WindowType.Widget)
+        self._tab_visibility_sync = False
+        self.mark_as_docked()
+
+    def mark_as_docked(self) -> None:
+        self._floating = False
+        self.clear_pending_float_geometry()
+        self._title_bar.set_float_button_icon(False)
+        self._sync_title_bar_widgets()
+
+    def prepare_as_floating_dock(self, owner: QWidget | None = None) -> None:
+        flags = (
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setParent(owner, flags)
+        self._floating = True
+        self._title_bar.set_float_button_icon(True)
+        self.set_tabbed_visibility_override(None)
+        self._sync_title_bar_widgets()
+
+    def set_pre_float_position(self, position: int | None) -> None:
+        self._pre_float_position = position
+
+    def pre_float_position(self) -> int | None:
+        return self._pre_float_position
+
+    def set_pre_float_area_side(self, side: Qt.DockWidgetArea | None) -> None:
+        self._pre_float_area_side = side
+
+    def pre_float_area_side(self) -> Qt.DockWidgetArea | None:
+        return self._pre_float_area_side
+
+    def set_pre_float_restore_hint(self, hint: dict[str, object] | None) -> None:
+        self._pre_float_restore_hint = hint
+
+    def pre_float_restore_hint(self) -> dict[str, object] | None:
+        return self._pre_float_restore_hint
+
+    def set_pre_float_selected(self, selected: bool) -> None:
+        self._pre_float_selected = selected
+
+    def pre_float_selected(self) -> bool:
+        return self._pre_float_selected
+
+    def set_pre_float_save_as_docked(self, save_as_docked: bool) -> None:
+        self._pre_float_save_as_docked = save_as_docked
+
+    def pre_float_save_as_docked(self) -> bool:
+        return self._pre_float_save_as_docked
+
+    def set_restored_docked_size(self, size: QSize | None) -> None:
+        self._restored_docked_size = size
+
+    def restored_docked_size(self) -> QSize | None:
+        return self._restored_docked_size
+
+    # ------------------------------------------------------------------
     # Internal: float / dock transitions
     # ------------------------------------------------------------------
 
@@ -257,7 +377,7 @@ class LDockWidget(QWidget):
         """Detach from dock area and become a floating top-level window."""
         self._reset_interaction_state()
         if self._main_window is not None:
-            self._main_window._snapshot_floating_geometries()
+            self._main_window.snapshot_floating_geometries()
 
         # Capture geometry BEFORE detaching (mapToGlobal needs a live parent chain)
         snap_pos = self._pending_float_pos or self.mapToGlobal(QPoint(0, 0))
@@ -272,30 +392,27 @@ class LDockWidget(QWidget):
         )
 
         if self._current_area is not None:
-            dock_id = self._main_window._dock_id(self) if self._main_window is not None else None
+            dock_id = self._main_window.dock_identifier(self) if self._main_window is not None else None
             self._pre_float_restore_hint = None
             self._pre_float_selected = False
             self._pre_float_save_as_docked = False
             if self._main_window is not None and dock_id is not None:
-                hints: dict[str, dict[str, object]] = {}
-                area_state = self._current_area.export_state()
-                self._main_window._collect_restore_hints(area_state, hints)
-                self._pre_float_restore_hint = hints.get(dock_id)
+                self._pre_float_restore_hint = self._main_window.collect_restore_hint_for_dock(
+                    self._current_area.export_state(),
+                    dock_id,
+                )
                 current = self._current_area.current_tab_dock()
-                current_id = self._main_window._dock_id(current) if current is not None else None
+                current_id = self._main_window.dock_identifier(current) if current is not None else None
                 self._pre_float_selected = current_id == dock_id
                 self._pre_float_save_as_docked = bool(
                     self._pre_float_restore_hint
                     and self._pre_float_restore_hint.get("restore_mode") == "tab"
                 )
-            self._pre_float_position = self._current_area._insertion_order.get(
-                self,
-                self._current_area._docks.index(self),
-            )
-            self._pre_float_area_side = self._current_area._area_side
+            self._pre_float_position = self._current_area.dock_insertion_index(self)
+            self._pre_float_area_side = self._current_area.area_side
             self._current_area.remove_dock(self)
             if self._main_window is not None:
-                self._main_window._sync_content_tree_to_areas()
+                self._main_window.sync_layout_state_from_areas()
 
         flags = (
             Qt.WindowType.Tool
@@ -306,13 +423,10 @@ class LDockWidget(QWidget):
         # On Windows, a Tool window with no owner has no z-order relationship
         # with the application and may disappear behind the main window.
         if self._main_window is not None:
-            self.setParent(self._main_window, flags)
+            self.prepare_as_floating_dock(self._main_window)
         else:
-            self.setParent(None, flags)
+            self.prepare_as_floating_dock(None)
         self.setWindowTitle(self._title)
-        # Floating docks must stop honoring any stale tab-group visibility
-        # override once they become top-level windows.
-        self._set_tabbed_visibility_override(None)
 
         # Add size grip only when not already in layout
         if self._size_grip is None:
@@ -329,8 +443,6 @@ class LDockWidget(QWidget):
         if floating_size.isValid() and floating_size.width() >= 80 and floating_size.height() >= 40:
             self.resize(floating_size)
 
-        self._floating = True
-        self._title_bar.set_float_button_icon(True)
         self.show()
         self.raise_()
         self.activateWindow()
@@ -342,7 +454,7 @@ class LDockWidget(QWidget):
             return
         self._reset_interaction_state()
         preferred_area = self._pre_float_area_side or Qt.DockWidgetArea.LeftDockWidgetArea
-        area = self._main_window._resolve_dock_area(self, preferred_area)
+        area = self._main_window.resolve_dock_area(self, preferred_area)
         if area is None:
             return
 
@@ -362,18 +474,15 @@ class LDockWidget(QWidget):
                 restore_side = None
         target_available = (
             isinstance(target_id, str)
-            and self._main_window._state_contains_id(
-                self._main_window._area_state(area), target_id
-            )
+            and self._main_window.area_state_contains_dock(area, target_id)
         )
         if mode in {"tab", "side"} and target_available:
-            self._main_window._drop_docks(
+            self._main_window.drop_docks(
                 area, [self], mode=mode, target_id=target_id, side=restore_side,
             )
             self.dockLocationChanged.emit(area)
         else:
             self._main_window.addDockWidget(area, self)
-        self._title_bar.set_float_button_icon(False)
         if self._main_window is not None:
             self._main_window.raise_()
             self._main_window.activateWindow()
@@ -412,6 +521,19 @@ class LDockWidget(QWidget):
         floatable = bool(self._features & DockWidgetFloatable)
         self._title_bar.show_close_button(closable)
         self._title_bar.show_float_button(floatable)
+
+    def _sync_title_bar_widgets(self) -> None:
+        if self._custom_title_bar is None:
+            if self._title_bar.parent() is None:
+                self._outer_layout.insertWidget(0, self._title_bar)
+            self._title_bar.show()
+            return
+        if self._custom_title_bar.parent() is not self:
+            self._outer_layout.insertWidget(0, self._custom_title_bar)
+        self._custom_title_bar.show()
+        self._title_bar.hide()
+        if self._title_bar.parent() is self:
+            self._title_bar.setParent(None)
 
     # ------------------------------------------------------------------
     # Slots
@@ -479,6 +601,17 @@ class LDockWidget(QWidget):
             super().setVisible(visible)
             if not visible:
                 self._reset_interaction_state()
+            return
+        parent_widget = self.parentWidget()
+        if (
+            not visible
+            and parent_widget is not None
+            and not parent_widget.isVisible()
+            and self._current_area is not None
+            and self._current_area.is_tabified_dock(self)
+        ):
+            super().setVisible(visible)
+            self._reset_interaction_state()
             return
         self._explicitly_hidden = not visible
         if (

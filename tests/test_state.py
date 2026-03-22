@@ -281,6 +281,44 @@ def test_save_restore_hidden_dock_visibility(qapp):
     assert not hidden_live.isVisible()
 
 
+def test_save_restore_preserves_custom_title_bar_in_frameless_window(qapp):
+    source = LMainWindow()
+    source.setWindowFlags(source.windowFlags() | Qt.WindowType.FramelessWindowHint)
+    dock = _make_dock("custom")
+    custom_title = QWidget()
+    custom_title.setObjectName("customTitleBar")
+    custom_title.setMinimumHeight(24)
+    dock.setTitleBarWidget(custom_title)
+    source.addDockWidget(LeftDockWidgetArea, dock)
+    source.show()
+    qapp.processEvents()
+
+    dock.setFloating(True)
+    qapp.processEvents()
+    state = source.saveState()
+
+    restored = LMainWindow()
+    restored.setWindowFlags(restored.windowFlags() | Qt.WindowType.FramelessWindowHint)
+    dock_live = _make_dock("custom")
+    custom_title_live = QWidget()
+    custom_title_live.setObjectName("customTitleBar")
+    custom_title_live.setMinimumHeight(24)
+    dock_live.setTitleBarWidget(custom_title_live)
+    restored.addDockWidget(RightDockWidgetArea, dock_live)
+    restored.show()
+    qapp.processEvents()
+
+    assert restored.restoreState(state) is True
+    qapp.processEvents()
+
+    assert dock_live.titleBarWidget() is custom_title_live
+    assert custom_title_live.parent() is dock_live
+    assert custom_title_live.isVisible()
+    assert dock_live._title_bar.isHidden()
+    assert dock_live.isFloating()
+    assert dock_live.isVisible()
+
+
 def test_save_state_uses_live_layout_membership(qapp):
     """saveState serializes actual area membership even if the cache is stale."""
     win = LMainWindow()

@@ -688,6 +688,9 @@ class LMainWindow(QWidget):
     def _dock_id(self, dock: LDockWidget) -> str | None:
         return dock.objectName() or dock.windowTitle() or None
 
+    def dock_identifier(self, dock: LDockWidget | None) -> str | None:
+        return self._dock_id(dock) if dock is not None else None
+
     def _allow_tabs(self) -> bool:
         return bool(
             self._dock_options
@@ -715,6 +718,9 @@ class LMainWindow(QWidget):
         leaf = self._leaf_for_area(area)
         return leaf.area_state if leaf is not None else None
 
+    def area_state(self, area: Qt.DockWidgetArea) -> object | None:
+        return self._area_state(area)
+
     def _set_area_state(self, area: Qt.DockWidgetArea, state: object | None) -> None:
         if state is None:
             self._prune_area_leaf(area)
@@ -730,6 +736,9 @@ class LMainWindow(QWidget):
         if node.get("type") == "dock":
             return node.get("id") == dock_id
         return any(self._state_contains_id(child, dock_id) for child in node.get("children", []))
+
+    def area_state_contains_dock(self, area: Qt.DockWidgetArea, dock_id: str) -> bool:
+        return self._state_contains_id(self._area_state(area), dock_id)
 
     def _state_collect_ids(self, node: object | None) -> list[str]:
         if not isinstance(node, dict):
@@ -906,7 +915,16 @@ class LMainWindow(QWidget):
                                 ).value
                             ),
                         }
-                self._collect_restore_hints(child, hints, child_inherited)
+                    self._collect_restore_hints(child, hints, child_inherited)
+
+    def collect_restore_hint_for_dock(
+        self,
+        node: object | None,
+        dock_id: str,
+    ) -> dict[str, object] | None:
+        hints: dict[str, dict[str, object]] = {}
+        self._collect_restore_hints(node, hints)
+        return hints.get(dock_id)
 
     def _state_tabify(
         self,
@@ -1135,8 +1153,8 @@ class LMainWindow(QWidget):
             self._dock_areas[area].restore_state(states.get(area), lookup)
             for dock in self._dock_areas[area].all_docks():
                 self._dock_map[dock] = area
-                dock._main_window = self
-                dock._floating = False
+                dock.bind_main_window(self)
+                dock.mark_as_docked()
 
     def setDockOptions(self, options: QMainWindow.DockOption) -> None:
         self._dock_options = options
@@ -1217,19 +1235,37 @@ class LMainWindow(QWidget):
         floating_map = {
             dock: area
             for dock, area in self._dock_map.items()
-            if dock._floating and dock not in docked_map
+            if dock.isFloating() and dock not in docked_map
         }
         self._dock_map = {**docked_map, **floating_map}
 
     def _snapshot_floating_geometries(self) -> None:
         """Preserve docked geometries before a float-all sequence reshapes siblings."""
         for dock in self._dock_map:
-            if dock._floating or dock._pending_float_pos is not None:
-                continue
-            if not dock.isVisible():
-                continue
-            dock._pending_float_pos = dock.mapToGlobal(QPoint(0, 0))
-            dock._pending_float_size = dock.size()
+            dock.capture_pending_float_geometry()
+
+    def snapshot_floating_geometries(self) -> None:
+        self._snapshot_floating_geometries()
+
+    def sync_layout_state_from_areas(self) -> None:
+        self._sync_content_tree_to_areas()
+
+    def resolve_dock_area(
+        self, dock: LDockWidget, preferred_area: Qt.DockWidgetArea
+    ) -> Qt.DockWidgetArea | None:
+        return self._resolve_dock_area(dock, preferred_area)
+
+    def drop_docks(
+        self,
+        area: Qt.DockWidgetArea,
+        docks: list[LDockWidget],
+        mode: str = "area",
+        target_dock: LDockWidget | None = None,
+        target_id: str | None = None,
+        target_key: str | None = None,
+        side: Qt.DockWidgetArea | None = None,
+    ) -> None:
+        self._drop_docks(area, docks, mode, target_dock, target_id, target_key, side)
 
     def addDockWidget(self, area: Qt.DockWidgetArea, dock: LDockWidget) -> None:
         resolved_area = self._resolve_dock_area(dock, area)
@@ -1239,28 +1275,19 @@ class LMainWindow(QWidget):
             raise ValueError(f"Unsupported dock area: {area!r}")
         self._dock_popup_order.setdefault(dock, len(self._dock_popup_order))
 
-        dock._main_window = self
+        dock.bind_main_window(self)
         pos = None
         if (
-            dock._floating
-            and getattr(dock, "_pre_float_area_side", None) == resolved_area
-            and getattr(dock, "_pre_float_position", None) is not None
+            dock.isFloating()
+            and dock.pre_float_area_side() == resolved_area
+            and dock.pre_float_position() is not None
         ):
-            pos = dock._pre_float_position
+            pos = dock.pre_float_position()
 
-        if self._area_for_dock(dock) == resolved_area and not dock._floating:
+        if self._area_for_dock(dock) == resolved_area and not dock.isFloating():
             return
 
-        dock._floating = False
-        dock._pending_float_pos = None
-        dock._pending_float_size = None
-        # Clear stale floating window flags (Tool|FramelessHint|StaysOnTop) before
-        # the area rebuild so _build_widget can reparent the dock as a plain child
-        # widget.  _tab_visibility_sync prevents the implicit hide() from setting
-        # _explicitly_hidden, which would cause _rebuild() to re-hide the dock.
-        dock._tab_visibility_sync = True
-        dock.setParent(None, Qt.WindowType.Widget)
-        dock._tab_visibility_sync = False
+        dock.prepare_as_child_dock()
 
         dock_id = self._dock_id(dock)
         if dock_id is None:
@@ -1275,7 +1302,6 @@ class LMainWindow(QWidget):
         area_updates[resolved_area] = self._state_add(resolved_area, payload, pos)
         self._apply_area_state_updates(area_updates)
         dock.dockLocationChanged.emit(resolved_area)
-        dock._title_bar.set_float_button_icon(False)
 
     def removeDockWidget(self, dock: LDockWidget) -> None:
         area = self._area_for_dock(dock)
@@ -1317,15 +1343,14 @@ class LMainWindow(QWidget):
         if resolved_area is None:
             return False
 
-        dock._pre_float_area_side = resolved_area
-        dock._pre_float_position = int(entry.get("tab_index", 0))
-        dock._floating = True
+        dock.set_pre_float_area_side(resolved_area)
+        dock.set_pre_float_position(int(entry.get("tab_index", 0)))
         size = entry.get("docked_size")
         if isinstance(size, list) and len(size) == 2:
             try:
-                dock._restored_docked_size = QSize(int(size[0]), int(size[1]))
+                dock.set_restored_docked_size(QSize(int(size[0]), int(size[1])))
             except (TypeError, ValueError):
-                dock._restored_docked_size = None
+                dock.set_restored_docked_size(None)
         mode = entry.get("restore_mode")
         target_id = entry.get("restore_target_id")
         side = None
@@ -1383,11 +1408,9 @@ class LMainWindow(QWidget):
             target_state, first_id, {"type": "dock", "id": second_id}
         )
         self._apply_area_state_updates(area_updates)
-        second._main_window = self
-        second._floating = False
-        second.setWindowFlags(Qt.WindowType.Widget)
+        second.bind_main_window(self)
         second.dockLocationChanged.emit(area)
-        second._title_bar.set_float_button_icon(False)
+        second.mark_as_docked()
 
     def _state_split_dock(
         self,
@@ -2046,11 +2069,8 @@ class LMainWindow(QWidget):
             ) or {"type": "dock", "id": self._dock_id(docks[0])}
         area_updates: dict[Qt.DockWidgetArea, object | None] = {}
         for dock in docks:
-            dock._main_window = self
-            dock._floating = False
-            dock._tab_visibility_sync = True
-            dock.setParent(None, Qt.WindowType.Widget)
-            dock._tab_visibility_sync = False
+            dock.bind_main_window(self)
+            dock.mark_as_docked()
             old_area = self._area_for_dock(dock)
             if old_area != Qt.DockWidgetArea.NoDockWidgetArea:
                 dock_ids = {
@@ -2083,7 +2103,6 @@ class LMainWindow(QWidget):
         self._apply_area_state_updates(area_updates)
         for dock in docks:
             dock.dockLocationChanged.emit(resolved_area)
-            dock._title_bar.set_float_button_icon(False)
 
     def _resolve_dock_area(
         self, dock: LDockWidget, preferred_area: Qt.DockWidgetArea
@@ -2363,7 +2382,7 @@ class LMainWindow(QWidget):
 
         for dock, area in self._dock_map.items():
             ident = self._dock_id(dock)
-            if ident is None or ident not in probe_docks or not dock._floating:
+            if ident is None or ident not in probe_docks or not dock.isFloating():
                 continue
             probe_dock = probe_docks[ident]
             probe.addDockWidget(area, probe_dock)
@@ -2440,16 +2459,9 @@ class LMainWindow(QWidget):
         for ident, dock in dock_lookup.items():
             probe_dock = probe_docks[ident]
             if probe_dock.isFloating():
-                dock._pre_float_area_side = probe.dockWidgetArea(probe_dock)
-                dock._pre_float_position = 0
-                dock.setParent(None)
-                dock.setWindowFlags(
-                    Qt.WindowType.Tool
-                    | Qt.WindowType.FramelessWindowHint
-                    | Qt.WindowType.WindowStaysOnTopHint
-                )
-                dock._floating = True
-                dock._title_bar.set_float_button_icon(True)
+                dock.set_pre_float_area_side(probe.dockWidgetArea(probe_dock))
+                dock.set_pre_float_position(0)
+                dock.prepare_as_floating_dock()
                 geometry = probe_dock.geometry()
                 dock.setGeometry(
                     geometry.x(),
@@ -2485,12 +2497,12 @@ class LMainWindow(QWidget):
                 continue
             area_docks = self._dock_areas[area]._docks
             tab_index = area_docks.index(dock) if dock in area_docks else 0
-            floating_from_tab = dock._floating and dock._pre_float_save_as_docked
+            floating_from_tab = dock.isFloating() and dock.pre_float_save_as_docked()
             entry: dict[str, object] = {
                 "id": ident,
                 "area": area.value,
-                "tab_index": dock._pre_float_position if floating_from_tab and dock._pre_float_position is not None else tab_index,
-                "floating": dock._floating and not floating_from_tab,
+                "tab_index": dock.pre_float_position() if floating_from_tab and dock.pre_float_position() is not None else tab_index,
+                "floating": dock.isFloating() and not floating_from_tab,
                 "visible": dock._toggle_action_checked_value(),
             }
             if not entry["floating"]:
@@ -2499,9 +2511,9 @@ class LMainWindow(QWidget):
                 g = dock.geometry()
                 entry["geometry"] = [g.x(), g.y(), g.width(), g.height()]
             entry.update(restore_hints.get(ident, {}))
-            if floating_from_tab and dock._pre_float_restore_hint is not None:
-                entry.update(deepcopy(dock._pre_float_restore_hint))
-                if dock._pre_float_selected:
+            if floating_from_tab and dock.pre_float_restore_hint() is not None:
+                entry.update(deepcopy(dock.pre_float_restore_hint()))
+                if dock.pre_float_selected():
                     selected_overrides[str(int(area.value))] = ident
             docks_state.append(entry)
 
@@ -2573,16 +2585,9 @@ class LMainWindow(QWidget):
                 if not entry.get("floating"):
                     continue
                 area = Qt.DockWidgetArea(entry["area"])
-                dock._pre_float_area_side = area
-                dock._pre_float_position = entry.get("tab_index", 0)
-                dock.setParent(None)
-                dock.setWindowFlags(
-                    Qt.WindowType.Tool
-                    | Qt.WindowType.FramelessWindowHint
-                    | Qt.WindowType.WindowStaysOnTopHint
-                )
-                dock._floating = True
-                dock._title_bar.set_float_button_icon(True)
+                dock.set_pre_float_area_side(area)
+                dock.set_pre_float_position(entry.get("tab_index", 0))
+                dock.prepare_as_floating_dock()
                 g = entry.get("geometry")
                 if g:
                     dock.setGeometry(g[0], g[1], g[2], g[3])
@@ -2595,12 +2600,12 @@ class LMainWindow(QWidget):
                 if dock is None:
                     continue
                 if entry.get("visible", True):
-                    dock._explicitly_hidden = False
-                    if dock._current_area is not None and dock._current_area._tab_area is not None:
-                        dock._current_area._tab_area._sync_visibility()
-                    elif not dock._floating:
+                    dock.set_explicit_hidden(False)
+                    if dock.current_area() is not None and dock.current_area()._tab_area is not None:
+                        dock.current_area()._tab_area._sync_visibility()
+                    elif not dock.isFloating():
                         dock.show()
-                    dock._sync_toggle_action_checked()
+                    dock.sync_toggle_action_checked()
                 else:
                     dock.setVisible(False)
 
